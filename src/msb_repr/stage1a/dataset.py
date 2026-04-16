@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 from msb_repr.stage1a.config import Stage1ADatasetSpec
 
@@ -126,3 +126,56 @@ def collate_fn_stage1a(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[Stage1AMeta]]:
     shorts, longs, labels, metas = zip(*batch)
     return torch.stack(shorts), torch.stack(longs), torch.stack(labels), list(metas)
+
+
+class Stage1ASymbolBalancedBatchSampler(Sampler[list[int]]):
+    """Round-robin batch sampler that keeps symbol coverage mixed within a batch."""
+
+    def __init__(self, symbols: list[str], batch_size: int, shuffle: bool = True, drop_last: bool = False) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        self.symbols = symbols
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.drop_last = drop_last
+        self._symbol_values = list(dict.fromkeys(symbols))
+        self._indices_by_symbol: dict[str, list[int]] = {symbol: [] for symbol in self._symbol_values}
+        for idx, symbol in enumerate(symbols):
+            self._indices_by_symbol[symbol].append(idx)
+
+    def __iter__(self):
+        rng = np.random.default_rng()
+        pools = {symbol: indices.copy() for symbol, indices in self._indices_by_symbol.items()}
+        symbol_order = self._symbol_values.copy()
+        if self.shuffle:
+            rng.shuffle(symbol_order)
+            for indices in pools.values():
+                rng.shuffle(indices)
+
+        offsets = {symbol: 0 for symbol in symbol_order}
+        active_symbols = [symbol for symbol in symbol_order if pools[symbol]]
+        batch: list[int] = []
+
+        while active_symbols:
+            next_active: list[str] = []
+            for symbol in active_symbols:
+                pos = offsets[symbol]
+                if pos >= len(pools[symbol]):
+                    continue
+                batch.append(pools[symbol][pos])
+                offsets[symbol] += 1
+                if offsets[symbol] < len(pools[symbol]):
+                    next_active.append(symbol)
+                if len(batch) == self.batch_size:
+                    yield batch
+                    batch = []
+            active_symbols = next_active
+
+        if batch and not self.drop_last:
+            yield batch
+
+    def __len__(self) -> int:
+        total = len(self.symbols)
+        if self.drop_last:
+            return total // self.batch_size
+        return (total + self.batch_size - 1) // self.batch_size

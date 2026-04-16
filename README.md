@@ -55,6 +55,14 @@ source .venv/bin/activate
 uv pip install -e ".[dev,viz]"
 ```
 
+Notebook tabanlı latent inceleme de gerekiyorsa:
+
+```bash
+uv venv --python 3.10
+source .venv/bin/activate
+uv pip install -e ".[dev,viz,notebook]"
+```
+
 ## İlk Çalıştırma Komutları
 
 Dataset build:
@@ -77,6 +85,22 @@ python scripts/train_stage1a.py \
   --dataset-root data/stage1a/binance/15m \
   --epochs 50 \
   --batch-size 32
+```
+
+Latent export:
+
+```bash
+python scripts/export_stage1a_latents.py \
+  --dataset-root data/stage1a/binance/15m \
+  --checkpoint-dir data/stage1a/binance/15m/checkpoints/ce_only \
+  --split val
+```
+
+Val latent analizi:
+
+```bash
+python scripts/analyze_stage1a_latents.py \
+  --latent-path data/stage1a/binance/15m/checkpoints/ce_only/analysis/val_latents.npz
 ```
 
 Temel test paketi:

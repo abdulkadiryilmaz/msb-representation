@@ -12,6 +12,7 @@ import torch.nn as nn
 from loguru import logger
 from torch.utils.data import DataLoader
 
+from msb_repr.stage1a.losses import SupConLoss
 from msb_repr.stage1a.model import Stage1AModel
 
 
@@ -21,6 +22,11 @@ class Stage1ATrainerConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-5
     patience: int = 10
+    use_supcon: bool = False
+    supcon_weight: float = 0.05
+    supcon_temperature: float = 0.1
+    supcon_embedding_key: str = "z_proj"
+    supcon_positive_mode: str = "label"
     checkpoint_dir: Path = Path("data/checkpoints/stage1a")
 
 
@@ -50,23 +56,32 @@ class Stage1ATrainer:
             weight_decay=cfg.weight_decay,
         )
         self.criterion = nn.CrossEntropyLoss()
+        self.supcon_criterion = SupConLoss(cfg.supcon_temperature) if cfg.use_supcon else None
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader) -> dict[str, list[float]]:
         best_val_loss = float("inf")
         patience_counter = 0
         history: dict[str, list[float]] = {
             "train_loss": [],
+            "train_ce_loss": [],
+            "train_supcon_loss": [],
             "val_loss": [],
+            "val_ce_loss": [],
+            "val_supcon_loss": [],
             "val_macro_f1": [],
         }
         self.cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         for epoch in range(1, self.cfg.epochs + 1):
-            train_loss, _, _ = self._run_epoch(train_loader, train=True)
-            val_loss, val_macro_f1, val_metrics = self._run_epoch(val_loader, train=False)
+            train_loss, train_ce_loss, train_supcon_loss, _, _ = self._run_epoch(train_loader, train=True)
+            val_loss, val_ce_loss, val_supcon_loss, val_macro_f1, val_metrics = self._run_epoch(val_loader, train=False)
 
             history["train_loss"].append(train_loss)
+            history["train_ce_loss"].append(train_ce_loss)
+            history["train_supcon_loss"].append(train_supcon_loss)
             history["val_loss"].append(val_loss)
+            history["val_ce_loss"].append(val_ce_loss)
+            history["val_supcon_loss"].append(val_supcon_loss)
             history["val_macro_f1"].append(val_macro_f1)
 
             logger.info(
@@ -77,6 +92,14 @@ class Stage1ATrainer:
                 val_loss,
                 val_macro_f1,
             )
+            if self.cfg.use_supcon:
+                logger.debug(
+                    "Aux losses | train_ce={:.5f} train_supcon={:.5f} val_ce={:.5f} val_supcon={:.5f}",
+                    train_ce_loss,
+                    train_supcon_loss,
+                    val_ce_loss,
+                    val_supcon_loss,
+                )
             logger.debug("Val metrics: {}", val_metrics)
 
             if val_loss < best_val_loss:
@@ -93,19 +116,42 @@ class Stage1ATrainer:
         self._save_history(history)
         return history
 
-    def _run_epoch(self, loader: DataLoader, train: bool) -> tuple[float, float, dict[str, float]]:
+    def _run_epoch(self, loader: DataLoader, train: bool) -> tuple[float, float, float, float, dict[str, float]]:
         self.model.train(train)
         total_loss = 0.0
+        total_ce_loss = 0.0
+        total_supcon_loss = 0.0
         preds = []
         labels = []
 
         with torch.set_grad_enabled(train):
-            for short_x, long_x, y, _ in loader:
+            for short_x, long_x, y, metas in loader:
                 short_x = short_x.to(self.device)
                 long_x = long_x.to(self.device)
                 y = y.to(self.device)
                 outputs = self.model(short_x, long_x)
-                loss = self.criterion(outputs["logits"], y)
+                ce_loss = self.criterion(outputs["logits"], y)
+                supcon_loss = ce_loss.new_zeros(())
+                if self.supcon_criterion is not None:
+                    if self.cfg.supcon_embedding_key not in outputs:
+                        raise KeyError(
+                            f"SupCon embedding key not produced by model: {self.cfg.supcon_embedding_key}"
+                        )
+                    symbol_ids = None
+                    if self.cfg.supcon_positive_mode == "label_diff_symbol":
+                        symbol_to_id = {symbol: idx for idx, symbol in enumerate(dict.fromkeys(meta.symbol for meta in metas))}
+                        symbol_ids = torch.tensor(
+                            [symbol_to_id[meta.symbol] for meta in metas],
+                            dtype=torch.long,
+                            device=self.device,
+                        )
+                    supcon_loss = self.supcon_criterion(
+                        outputs[self.cfg.supcon_embedding_key],
+                        y,
+                        symbol_ids=symbol_ids,
+                        positive_mode=self.cfg.supcon_positive_mode,
+                    )
+                loss = ce_loss + self.cfg.supcon_weight * supcon_loss
 
                 if train:
                     self.optimizer.zero_grad()
@@ -113,13 +159,22 @@ class Stage1ATrainer:
                     self.optimizer.step()
 
                 total_loss += loss.item() * short_x.size(0)
+                total_ce_loss += ce_loss.item() * short_x.size(0)
+                total_supcon_loss += supcon_loss.item() * short_x.size(0)
                 preds.append(outputs["logits"].argmax(dim=1).detach().cpu().numpy())
                 labels.append(y.detach().cpu().numpy())
 
         y_true = np.concatenate(labels)
         y_pred = np.concatenate(preds)
         macro_f1, per_class = _macro_f1(y_true, y_pred)
-        return total_loss / len(loader.dataset), macro_f1, per_class  # type: ignore[arg-type]
+        dataset_len = len(loader.dataset)  # type: ignore[arg-type]
+        return (
+            total_loss / dataset_len,
+            total_ce_loss / dataset_len,
+            total_supcon_loss / dataset_len,
+            macro_f1,
+            per_class,
+        )
 
     def _save_checkpoint(self, name: str) -> None:
         path = self.cfg.checkpoint_dir / name
@@ -130,5 +185,6 @@ class Stage1ATrainer:
         path.write_text(json.dumps(history, indent=2))
 
     def save_config(self) -> None:
+        self.cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         path = self.cfg.checkpoint_dir / "train_config.json"
         path.write_text(json.dumps(asdict(self.cfg), indent=2, default=str))

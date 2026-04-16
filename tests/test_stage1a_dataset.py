@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from msb_repr.stage1a.dataset import Stage1ADualWindowDataset, align_windows_by_timestamp
+from msb_repr.stage1a.dataset import (
+    Stage1ADualWindowDataset,
+    Stage1ASymbolBalancedBatchSampler,
+    align_windows_by_timestamp,
+)
 from msb_repr.stage1a.model import Stage1AModel
 
 
@@ -52,3 +56,28 @@ def test_stage1a_model_forward_shapes():
     assert tuple(outputs["z_fused"].shape) == (4, 96)
     assert tuple(outputs["z_proj"].shape) == (4, 64)
     assert tuple(outputs["logits"].shape) == (4, 3)
+
+
+def test_stage1a_model_forward_shapes_with_long_projection():
+    model = Stage1AModel(short_input_channels=10, long_input_channels=10, long_projection_dim=16)
+    short_x = np.ones((4, 10, 48), dtype=np.float32)
+    long_x = np.ones((4, 10, 288), dtype=np.float32)
+
+    outputs = model(
+        model.short_encoder.stem[0].weight.new_tensor(short_x),
+        model.long_encoder.stem[0].weight.new_tensor(long_x),
+    )
+
+    assert tuple(outputs["z_long_proj"].shape) == (4, 16)
+
+
+def test_symbol_balanced_batch_sampler_mixes_symbols():
+    symbols = ["BTC", "BTC", "ETH", "ETH", "SOL", "SOL"]
+    sampler = Stage1ASymbolBalancedBatchSampler(symbols=symbols, batch_size=3, shuffle=False)
+
+    batches = list(iter(sampler))
+
+    assert len(batches) == 2
+    for batch in batches:
+        batch_symbols = {symbols[idx] for idx in batch}
+        assert len(batch_symbols) == 3

@@ -85,6 +85,7 @@ class Stage1AModel(nn.Module):
         z_long: int = 32,
         num_classes: int = 3,
         projection_dim: int = 64,
+        long_projection_dim: int | None = None,
         hidden_channels: int = 64,
         dropout: float = 0.1,
     ) -> None:
@@ -110,6 +111,11 @@ class Stage1AModel(nn.Module):
             nn.Linear(fused_dim, num_classes),
         )
         self.projection_head = ProjectionHead(fused_dim, projection_dim=projection_dim, dropout=dropout)
+        self.long_projection_head = (
+            ProjectionHead(z_long, projection_dim=long_projection_dim, dropout=dropout)
+            if long_projection_dim is not None
+            else None
+        )
 
     def forward(self, short_x: torch.Tensor, long_x: torch.Tensor) -> dict[str, torch.Tensor]:
         z_short = self.short_encoder(short_x)
@@ -117,13 +123,16 @@ class Stage1AModel(nn.Module):
         z_fused = torch.cat([z_short, z_long], dim=1)
         logits = self.classifier(z_fused)
         z_proj = self.projection_head(z_fused)
-        return {
+        outputs = {
             "z_short": z_short,
             "z_long": z_long,
             "z_fused": z_fused,
             "z_proj": z_proj,
             "logits": logits,
         }
+        if self.long_projection_head is not None:
+            outputs["z_long_proj"] = self.long_projection_head(z_long)
+        return outputs
 
 
 def get_device() -> torch.device:
