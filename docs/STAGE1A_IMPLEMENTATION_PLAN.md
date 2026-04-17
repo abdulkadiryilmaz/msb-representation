@@ -4,7 +4,7 @@ Bu doküman, `Stage 1A` için üzerinde uzlaşılan ilk uygulama sırasını öz
 
 İlgili tasarım worklog'u:
 
-- [2026-04-12-stage1-msb-representation-framing.md](worklogs/2026-04-12-stage1-msb-representation-framing.md)
+- [stage1-msb-representation-framing.md](foundations/stage1-msb-representation-framing.md)
 
 ## Scope
 

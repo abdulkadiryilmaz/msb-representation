@@ -173,8 +173,8 @@ Asıl karar ekseni:
 
 ## Related
 
-- `docs/worklogs/2026-04-14-ce-supcon-experiment-plan.md`
-- `docs/worklogs/2026-04-14-ce-supcon-v1-readout.md`
+- `docs/experiments/ce_supcon/2026-04-14-ce-supcon-experiment-plan.md`
+- `docs/experiments/ce_supcon/2026-04-14-ce-supcon-v1-readout.md`
 
 ---
 

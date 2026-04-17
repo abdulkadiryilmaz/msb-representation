@@ -154,8 +154,8 @@ Başarı için en kritik desen:
 
 ## Related
 
-- `docs/worklogs/2026-04-15-ce-supcon-long-v1-readout.md`
-- `docs/worklogs/2026-04-16-ce-supcon-long-v2-readout.md`
+- `docs/experiments/ce_supcon/2026-04-15-ce-supcon-long-v1-readout.md`
+- `docs/experiments/ce_supcon/2026-04-16-ce-supcon-long-v2-readout.md`
 
 ---
 

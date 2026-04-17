@@ -4,6 +4,13 @@
 
 Worklog'lar oturum bazlı geliştirme sürecini kaydeder. Amaç yalnızca **ne** yapıldığını değil, **neden** o kararın alındığını da görünür kılmaktır.
 
+Not:
+
+- `docs/worklogs/` karar, implementasyon ve yön değişikliği notları içindir
+- araştırma framing / kavramsal temel belgeleri `docs/foundations/` altında tutulur
+- deney sonuç okumaları `docs/experiments/` altında tutulur
+- üst seviye deney özeti için `docs/EXPERIMENT_INDEX.md` kullanılır
+
 ## Ne Zaman Worklog Açılmalı
 
 Şu durumlarda worklog aç:
@@ -13,7 +20,7 @@ Worklog'lar oturum bazlı geliştirme sürecini kaydeder. Amaç yalnızca **ne**
 - mimari kararlar veya tasarım yön değişimleri
 - veri sözleşmesi, normalizasyon, pencere tasarımı değişiklikleri
 - çok adımlı araştırma akışları
-- kayda değer training / evaluation deneyleri
+- mimari sonucu etkileyen experiment plan veya decision notları
 
 Şu durumlarda worklog açma:
 
@@ -32,7 +39,6 @@ docs/worklogs/YYYY-MM-DD-{topic}.md
 
 Örnek:
 
-- `2026-04-12-stage1-msb-representation-framing.md`
 - `2026-04-15-ce-only-baseline-review.md`
 - `2026-04-20-supcon-objective-v1.md`
 
@@ -102,6 +108,31 @@ Yapılan teknik değişikliğin yüksek seviyeli özeti.
 - `docs/MULTI_SCALE_MSB_INTERPRETATION.md`
 - `docs/TEMPORAL_CNN_BASICS.md`
 - `AGENTS.md`
+- `docs/EXPERIMENT_INDEX.md`
+
+## Experiments Ayrımı
+
+Deney notları için önerilen yapı:
+
+```text
+docs/experiments/
+  ce_only/
+  ce_supcon/
+```
+
+Bu klasörlerde şu tür dosyalar tutulur:
+
+- baseline sonucu
+- readout
+- comparison
+- synthesis
+- experiment plan
+
+Özet kural:
+
+- "araştırma çerçevesi / kavramsal temel ne?" -> `docs/foundations/`
+- "ne implement edildi ve neden?" -> `docs/worklogs/`
+- "deneyde ne oldu?" -> `docs/experiments/`
 
 ## Hızlı Kontrol Listesi
 
