@@ -63,3 +63,29 @@ def test_supcon_loss_label_diff_symbol_ignores_same_symbol_pairs():
 
     assert diff_symbol_loss.item() > 0.0
     assert diff_symbol_loss.item() != label_loss.item()
+
+
+def test_supcon_loss_neutral_same_symbol_is_lower_than_diff_symbol_mode():
+    loss_fn = SupConLoss(temperature=0.1)
+    features = torch.tensor(
+        [
+            [1.0, 0.0],   # label 0, symbol A
+            [0.98, 0.02], # label 0, symbol A
+            [0.9, 0.1],   # label 0, symbol B
+            [0.0, 1.0],   # label 1, symbol C
+        ],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([0, 0, 0, 1], dtype=torch.long)
+    symbol_ids = torch.tensor([0, 0, 1, 2], dtype=torch.long)
+
+    diff_symbol_loss = loss_fn(features, labels, symbol_ids=symbol_ids, positive_mode="label_diff_symbol")
+    neutral_loss = loss_fn(
+        features,
+        labels,
+        symbol_ids=symbol_ids,
+        positive_mode="label_diff_symbol_neutral_same_symbol",
+    )
+
+    assert neutral_loss.item() > 0.0
+    assert neutral_loss.item() < diff_symbol_loss.item()

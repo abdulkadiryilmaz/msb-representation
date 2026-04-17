@@ -17,17 +17,15 @@ Bu belge, Stage 1A araştırma yönünü ve representation-learning çerçevesin
 
 ## Current Active Experiment
 
-- active run: `CE + SupCon | long symbol v2`
-- plan: `docs/experiments/ce_supcon/2026-04-17-ce-supcon-long-symbol-v2-plan.md`
-- baseline to beat: `ce_supcon_long_v1`
-- current hypothesis:
-  - `same-label + different-symbol` çiftleri positive
-  - `same-label + same-symbol` çiftleri neutral
-  - bu mask, `v1`deki semantik kazancı korurken symbol shortcut etkisini daha bilinçli baskılayabilir
-- success criteria:
-  - `z_long` / `z_long_proj` label agreement yüksek kalmalı
-  - `z_fused` symbol agreement `v1`e yakın veya daha düşük olmalı
-  - classifier tarafı `v1`den belirgin kötü olmamalı
+- active run: yok
+- latest completed:
+  - `CE + SupCon | long symbol v2`
+  - readout: `docs/experiments/ce_supcon/2026-04-17-ce-supcon-long-symbol-v2-readout.md`
+- latest result:
+  - `long symbol v2` reddedildi
+  - neutral same-symbol mask, `long_v1`deki shortcut temizliğini koruyamadı
+- current best candidate:
+  - `ce_supcon_long_v1`
 
 ## Current Summary
 
@@ -38,7 +36,7 @@ Bu belge, Stage 1A araştırma yönünü ve representation-learning çerçevesin
 | `CE + SupCon` | long projection v1 | best current | en iyi latent geometry dengesi |
 | `CE + SupCon` | long projection v2 | rejected | weight düşürmek fayda getirmedi |
 | `CE + SupCon` | long symbol v1 | rejected | geometry yeniden symbol-heavy oldu |
-| `CE + SupCon` | long symbol v2 | in_progress | cross-symbol positive, same-symbol neutral mask test ediliyor |
+| `CE + SupCon` | long symbol v2 | rejected | neutral same-symbol mask yönü düzeltmedi; geometry hâlâ symbol-heavy |
 
 ## CE-Only
 
@@ -75,6 +73,7 @@ Klasör:
 4. `2026-04-16-ce-supcon-long-v2-readout.md`
 5. `2026-04-16-ce-supcon-long-symbol-v1-readout.md`
 6. `2026-04-17-ce-supcon-long-symbol-v2-plan.md`
+7. `2026-04-17-ce-supcon-long-symbol-v2-readout.md`
 
 Kısa sonuç:
 
@@ -82,7 +81,7 @@ Kısa sonuç:
 - branch-aware long projection en iyi sonuç
 - weight düşürme fayda getirmedi
 - ilk symbol-aware deneme başarısız oldu
-- `long symbol v2` şu anda koşuyor
+- `long symbol v2` reddedildi
 
 ## Worklogs
 

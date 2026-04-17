@@ -1,6 +1,6 @@
 # Experiment Plan: 2026-04-17 — CE + SupCon Long Symbol V2
 
-**Status**: In Progress  
+**Status**: Completed  
 **Goal**: `branch-aware SupCon` yapısını koruyup, symbol-aware positive tanımını `neutral same-symbol` mantığıyla yeniden deneyerek `ce_supcon_long_v1` üzerindeki shortcut temizliğini daha kontrollü biçimde geliştirmek
 
 ---
@@ -165,4 +165,8 @@ Koşu tamamlandığında şu sırayla ilerlenmeli:
 
 ---
 
-**Status**: In Progress
+**Status**: Completed
+
+Readout:
+
+- `docs/experiments/ce_supcon/2026-04-17-ce-supcon-long-symbol-v2-readout.md`

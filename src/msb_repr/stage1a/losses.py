@@ -29,11 +29,11 @@ class SupConLoss(nn.Module):
             raise ValueError("labels must have shape (batch,)")
         if features.shape[0] != labels.shape[0]:
             raise ValueError("features and labels batch size must match")
-        if positive_mode not in {"label", "label_diff_symbol"}:
+        if positive_mode not in {"label", "label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
             raise ValueError(f"Unknown positive_mode: {positive_mode}")
-        if positive_mode == "label_diff_symbol":
+        if positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
             if symbol_ids is None:
-                raise ValueError("symbol_ids required when positive_mode='label_diff_symbol'")
+                raise ValueError(f"symbol_ids required when positive_mode='{positive_mode}'")
             if symbol_ids.ndim != 1 or symbol_ids.shape[0] != labels.shape[0]:
                 raise ValueError("symbol_ids must have shape (batch,)")
 
@@ -47,11 +47,14 @@ class SupConLoss(nn.Module):
 
         labels = labels.view(-1, 1)
         positive_mask = torch.eq(labels, labels.T).to(features.dtype)
-        if positive_mode == "label_diff_symbol":
+        logits_mask = torch.ones_like(positive_mask) - torch.eye(batch_size, device=features.device, dtype=features.dtype)
+        if positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
             symbol_ids = symbol_ids.view(-1, 1)
             same_symbol_mask = torch.eq(symbol_ids, symbol_ids.T).to(features.dtype)
             positive_mask = positive_mask * (1.0 - same_symbol_mask)
-        logits_mask = torch.ones_like(positive_mask) - torch.eye(batch_size, device=features.device, dtype=features.dtype)
+            if positive_mode == "label_diff_symbol_neutral_same_symbol":
+                neutral_mask = torch.eq(labels, labels.T).to(features.dtype) * same_symbol_mask
+                logits_mask = logits_mask * (1.0 - neutral_mask)
         positive_mask = positive_mask * logits_mask
 
         exp_logits = torch.exp(logits) * logits_mask

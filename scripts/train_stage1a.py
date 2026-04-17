@@ -58,7 +58,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--supcon-positive-mode",
-        choices=["label", "label_diff_symbol"],
+        choices=["label", "label_diff_symbol", "label_diff_symbol_neutral_same_symbol"],
         default="label",
     )
     parser.add_argument("--supcon-balance-symbols", action="store_true")

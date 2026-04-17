@@ -21,8 +21,8 @@ Bu klasör, `CE + SupCon` deney planı ve sonuç okumalarını toplar.
    - ilk symbol-aware positive tanımı geometry'yi bozdu
 
 5. `long symbol v2`
-   - in progress
-   - cross-symbol positive + same-symbol neutral mask testi
+   - rejected
+   - neutral same-symbol mask, `long_v1`in geometry kazancını koruyamadı
 
 Önerilen sıra:
 
@@ -32,10 +32,11 @@ Bu klasör, `CE + SupCon` deney planı ve sonuç okumalarını toplar.
 4. `2026-04-16-ce-supcon-long-v2-readout.md`
 5. `2026-04-16-ce-supcon-long-symbol-v1-readout.md`
 6. `2026-04-17-ce-supcon-long-symbol-v2-plan.md`
+7. `2026-04-17-ce-supcon-long-symbol-v2-readout.md`
 
 Kısa sonuç:
 
 - fused-projection SupCon karışık sonuç verdi
 - branch-aware `long v1` şu an en iyi varyant
 - `long v2` ve ilk symbol-aware deneme reddedildi
-- `long symbol v2` şu anda in-progress
+- `long symbol v2` reddedildi

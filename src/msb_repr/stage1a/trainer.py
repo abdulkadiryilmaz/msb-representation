@@ -138,7 +138,7 @@ class Stage1ATrainer:
                             f"SupCon embedding key not produced by model: {self.cfg.supcon_embedding_key}"
                         )
                     symbol_ids = None
-                    if self.cfg.supcon_positive_mode == "label_diff_symbol":
+                    if self.cfg.supcon_positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
                         symbol_to_id = {symbol: idx for idx, symbol in enumerate(dict.fromkeys(meta.symbol for meta in metas))}
                         symbol_ids = torch.tensor(
                             [symbol_to_id[meta.symbol] for meta in metas],
