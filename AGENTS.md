@@ -9,8 +9,12 @@
 ## Dil ve Dokümantasyon
 - README ve repo içi ana dokümantasyon Türkçe tutulur
 - Teknik terimler gerekiyorsa İngilizce bırakılabilir, ama açıklama dili Türkçe olmalı
-- Yeni deney, mimari değişiklik veya veri sözleşmesi değişikliği worklog ile belgelenmeli
-- Rehber: `docs/WORKLOG_GUIDE.md`
+- Araştırma framing / kavramsal temel belgeleri `docs/foundations/` altında tutulur
+- Deney planları ve deney sonuç okumaları `docs/experiments/` altında tutulur
+- Mimari değişiklik, veri sözleşmesi değişikliği ve yön değiştirici kararlar `docs/worklogs/` altında belgelenir
+- Genel deney süreci: `docs/EXPERIMENT_WORKFLOW.md`
+- Üst seviye deney özeti: `docs/EXPERIMENT_INDEX.md`
+- Worklog rehberi: `docs/WORKLOG_GUIDE.md`
 
 ## Research Framing
 - Stage 1A is `MSB-oriented representation learning`
@@ -24,7 +28,8 @@
 - Long branch: broader structural context at the same anchor
 - Fusion baseline: concat
 - V1 objective: `CE only`
-- Next objective: `CE + SupCon`
+- Current best SupCon variant: branch-aware `CE + SupCon` on `z_long_proj`
+- Current active experiment should be checked in `docs/EXPERIMENT_INDEX.md`
 
 ## Data Contract
 - Raw OHLCV: `data/raw/<exchange>/<symbol>_<timeframe>.parquet`
@@ -72,12 +77,17 @@
   - `python scripts/train_stage1a.py --dataset-root data/stage1a/binance/15m --epochs 50 --batch-size 32`
 
 ## Documentation
+- `docs/foundations/stage1-msb-representation-framing.md`
+- `docs/EXPERIMENT_INDEX.md`
+- `docs/EXPERIMENT_WORKFLOW.md`
 - `docs/STAGE1A_IMPLEMENTATION_PLAN.md`
 - `docs/MULTI_SCALE_MSB_INTERPRETATION.md`
 - `docs/TEMPORAL_CNN_BASICS.md`
+- `docs/experiments/`
 - `docs/worklogs/`
 
 ## Worklogs
-- Create a worklog for architecture changes, experiment batches, or migration decisions
+- Create a worklog for architecture changes, migration decisions, or experiment-enabling implementation changes
 - Keep design rationale close to the code that depends on it
 - Dataset profile changes, label prior changes, feature changes, and objective changes require worklog coverage
+- Do not put routine experiment readouts in `docs/worklogs/`; use `docs/experiments/`

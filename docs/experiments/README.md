@@ -15,3 +15,4 @@ Kural:
 Üst seviye hızlı okuma için:
 
 - `docs/EXPERIMENT_INDEX.md`
+- `docs/EXPERIMENT_WORKFLOW.md`
