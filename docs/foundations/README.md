@@ -11,3 +11,4 @@ Buradaki belgeler:
 Başlangıç noktası:
 
 - `stage1-msb-representation-framing.md`
+- `stage1a-latent-concepts.md`
