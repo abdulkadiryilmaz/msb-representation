@@ -8,6 +8,8 @@ import torch
 from msb_repr.data.normalizer import Normalizer
 from msb_repr.stage1a.analysis import (
     build_domain_summary,
+    build_pressure_label_frame,
+    compute_intact_pressure_labels,
     compute_cosine_neighbors,
     compute_hard_case_scores,
     export_latents,
@@ -203,3 +205,45 @@ def test_embedding_bucket_rows_capture_neighbor_quality():
     assert len(rows) == 2
     assert summary["embedding_key"] == "z_short"
     assert summary["mean_nn_label_agreement"] >= 0.5
+
+
+def test_compute_intact_pressure_labels_separates_up_down_and_neutral():
+    arrays = {
+        "labels": np.array([0, 0, 0, 1], dtype=np.int64),
+        "timestamps": np.array([1, 2, 3, 4], dtype=np.int64),
+        "symbols": np.array(["BTC", "ETH", "SOL", "XRP"]),
+        "bull_close_count": np.array([1, 0, 0, 2], dtype=np.int64),
+        "bear_close_count": np.array([0, 1, 0, 0], dtype=np.int64),
+        "bull_wick_count": np.array([2, 0, 0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 2, 0, 0], dtype=np.int64),
+        "bull_final_excess": np.array([-0.0005, -0.0040, -0.0100, 0.0100], dtype=np.float32),
+        "bear_final_excess": np.array([-0.0050, -0.0004, -0.0100, np.nan], dtype=np.float32),
+        "bull_max_excess": np.array([0.0002, -0.0020, -0.0100, 0.0200], dtype=np.float32),
+        "bear_max_excess": np.array([-0.0040, 0.0003, -0.0100, np.nan], dtype=np.float32),
+    }
+    derived = compute_intact_pressure_labels(arrays, label_config={"min_break_pct": 0.002, "recent_bars": 12})
+
+    assert derived["pressure_label"].tolist() == ["up_pressure", "down_pressure", "neutral", "non_intact"]
+    assert derived["up_pressure_score"][0] > derived["down_pressure_score"][0]
+    assert derived["down_pressure_score"][1] > derived["up_pressure_score"][1]
+
+
+def test_build_pressure_label_frame_includes_join_keys():
+    arrays = {
+        "labels": np.array([0, 2], dtype=np.int64),
+        "timestamps": np.array([100, 200], dtype=np.int64),
+        "symbols": np.array(["BTC_USDT_15m", "ETH_USDT_15m"]),
+        "bull_close_count": np.array([0, 0], dtype=np.int64),
+        "bear_close_count": np.array([0, 3], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 0], dtype=np.int64),
+        "bull_final_excess": np.array([-0.01, np.nan], dtype=np.float32),
+        "bear_final_excess": np.array([-0.01, 0.01], dtype=np.float32),
+        "bull_max_excess": np.array([-0.01, np.nan], dtype=np.float32),
+        "bear_max_excess": np.array([-0.01, 0.02], dtype=np.float32),
+    }
+
+    frame = build_pressure_label_frame(arrays, label_config={"min_break_pct": 0.002})
+
+    assert frame.columns[:5] == ["index", "symbol", "timestamp", "base_label", "base_label_name"]
+    assert frame["pressure_label"].to_list() == ["neutral", "non_intact"]

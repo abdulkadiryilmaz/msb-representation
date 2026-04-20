@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
@@ -19,6 +20,7 @@ from msb_repr.stage1a.labels import find_last_pivot_high, find_last_pivot_low
 from msb_repr.stage1a.model import Stage1AModel, get_device
 
 LABEL_NAMES = {0: "intact", 1: "bullish", 2: "bearish"}
+PRESSURE_LABEL_NAMES = {-1: "non_intact", 0: "neutral", 1: "up_pressure", 2: "down_pressure"}
 
 
 @dataclass
@@ -258,6 +260,142 @@ def load_latent_export(path: Path) -> tuple[dict[str, np.ndarray], dict[str, Any
     if "export_metadata_json" in loaded.files:
         metadata = json.loads(loaded["export_metadata_json"].item())
     return arrays, metadata
+
+
+def _require_pressure_inputs(arrays: dict[str, np.ndarray]) -> None:
+    required = {
+        "labels",
+        "timestamps",
+        "symbols",
+        "bull_close_count",
+        "bear_close_count",
+        "bull_wick_count",
+        "bear_wick_count",
+        "bull_final_excess",
+        "bear_final_excess",
+        "bull_max_excess",
+        "bear_max_excess",
+    }
+    missing = sorted(required.difference(arrays))
+    if missing:
+        raise ValueError(f"Pressure labels require latent export domain summary arrays: {missing}")
+
+
+def _pressure_component_score(
+    close_count: np.ndarray,
+    wick_count: np.ndarray,
+    final_excess: np.ndarray,
+    max_excess: np.ndarray,
+    min_recent_break_bars: int,
+    recent_bars: int,
+    near_margin: float,
+) -> np.ndarray:
+    close_target = max(min_recent_break_bars - 1, 1)
+    close_ratio = np.clip(close_count.astype(np.float32) / float(close_target), 0.0, 1.0)
+    wick_ratio = np.clip(wick_count.astype(np.float32) / float(max(recent_bars, 1)), 0.0, 1.0)
+
+    final_proximity = np.zeros_like(close_ratio, dtype=np.float32)
+    max_proximity = np.zeros_like(close_ratio, dtype=np.float32)
+
+    finite_final = np.isfinite(final_excess)
+    finite_max = np.isfinite(max_excess)
+    final_proximity[finite_final] = np.clip(1.0 + (final_excess[finite_final] / near_margin), 0.0, 1.0)
+    max_proximity[finite_max] = np.clip(1.0 + (max_excess[finite_max] / near_margin), 0.0, 1.0)
+
+    return (
+        0.40 * close_ratio
+        + 0.15 * wick_ratio
+        + 0.25 * final_proximity
+        + 0.20 * max_proximity
+    ).astype(np.float32)
+
+
+def compute_intact_pressure_labels(
+    arrays: dict[str, np.ndarray],
+    label_config: dict[str, Any] | None = None,
+) -> dict[str, np.ndarray]:
+    _require_pressure_inputs(arrays)
+    cfg = label_config or {}
+    min_recent_break_bars = int(cfg.get("min_recent_break_bars", 2))
+    recent_bars = int(cfg.get("recent_bars", 12))
+    near_margin = float(cfg.get("pressure_near_margin", max(float(cfg.get("min_break_pct", 0.002)) * 1.5, 0.0015)))
+    min_pressure_score = float(cfg.get("pressure_min_score", 0.55))
+    dominance_margin = float(cfg.get("pressure_dominance_margin", 0.10))
+
+    up_score = _pressure_component_score(
+        close_count=arrays["bull_close_count"],
+        wick_count=arrays["bull_wick_count"],
+        final_excess=arrays["bull_final_excess"],
+        max_excess=arrays["bull_max_excess"],
+        min_recent_break_bars=min_recent_break_bars,
+        recent_bars=recent_bars,
+        near_margin=near_margin,
+    )
+    down_score = _pressure_component_score(
+        close_count=arrays["bear_close_count"],
+        wick_count=arrays["bear_wick_count"],
+        final_excess=arrays["bear_final_excess"],
+        max_excess=arrays["bear_max_excess"],
+        min_recent_break_bars=min_recent_break_bars,
+        recent_bars=recent_bars,
+        near_margin=near_margin,
+    )
+
+    labels = arrays["labels"].astype(np.int64)
+    intact_mask = labels == 0
+    dominant_score = np.maximum(up_score, down_score)
+    score_gap = np.abs(up_score - down_score).astype(np.float32)
+
+    pressure_label_ids = np.full(len(labels), -1, dtype=np.int64)
+    neutral_mask = intact_mask & ((dominant_score < min_pressure_score) | (score_gap < dominance_margin))
+    pressure_label_ids[neutral_mask] = 0
+    pressure_label_ids[intact_mask & ~neutral_mask & (up_score > down_score)] = 1
+    pressure_label_ids[intact_mask & ~neutral_mask & (down_score > up_score)] = 2
+
+    pressure_label_names = np.array([PRESSURE_LABEL_NAMES[int(idx)] for idx in pressure_label_ids], dtype="<U16")
+
+    return {
+        "intact_mask": intact_mask.astype(bool),
+        "pressure_label_id": pressure_label_ids,
+        "pressure_label": pressure_label_names,
+        "up_pressure_score": up_score,
+        "down_pressure_score": down_score,
+        "pressure_score_gap": score_gap,
+        "pressure_near_margin": np.full(len(labels), near_margin, dtype=np.float32),
+        "pressure_min_score": np.full(len(labels), min_pressure_score, dtype=np.float32),
+        "pressure_dominance_margin": np.full(len(labels), dominance_margin, dtype=np.float32),
+    }
+
+
+def build_pressure_label_frame(
+    arrays: dict[str, np.ndarray],
+    label_config: dict[str, Any] | None = None,
+) -> pl.DataFrame:
+    derived = compute_intact_pressure_labels(arrays, label_config=label_config)
+    labels = arrays["labels"].astype(np.int64)
+    return pl.DataFrame(
+        {
+            "index": np.arange(len(labels), dtype=np.int64),
+            "symbol": arrays["symbols"].astype(str),
+            "timestamp": arrays["timestamps"].astype(np.int64),
+            "base_label": labels,
+            "base_label_name": np.array([LABEL_NAMES[int(idx)] for idx in labels], dtype="<U8"),
+            "is_intact_base_label": derived["intact_mask"],
+            "pressure_label_id": derived["pressure_label_id"].astype(np.int64),
+            "pressure_label": derived["pressure_label"].astype(str),
+            "up_pressure_score": derived["up_pressure_score"].astype(np.float32),
+            "down_pressure_score": derived["down_pressure_score"].astype(np.float32),
+            "pressure_score_gap": derived["pressure_score_gap"].astype(np.float32),
+            "bull_close_count": arrays["bull_close_count"].astype(np.int64),
+            "bear_close_count": arrays["bear_close_count"].astype(np.int64),
+            "bull_wick_count": arrays["bull_wick_count"].astype(np.int64),
+            "bear_wick_count": arrays["bear_wick_count"].astype(np.int64),
+            "bull_final_excess": arrays["bull_final_excess"].astype(np.float32),
+            "bear_final_excess": arrays["bear_final_excess"].astype(np.float32),
+            "bull_max_excess": arrays["bull_max_excess"].astype(np.float32),
+            "bear_max_excess": arrays["bear_max_excess"].astype(np.float32),
+        }
+    )
 
 
 def compute_pca_projection(embeddings: np.ndarray, n_components: int = 2) -> tuple[np.ndarray, dict[str, Any]]:
