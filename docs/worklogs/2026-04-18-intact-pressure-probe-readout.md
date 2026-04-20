@@ -239,6 +239,84 @@ Başka deyişle:
 - ancak long branch'i pressure yönünde semantik hale getiremiyor
 - bu da genel başarısızlık okumasının büyük kısmının long taraflı veya fusion'ın başka eksenlerde bozulmasıyla ilişkili olabileceğini düşündürüyor
 
+## Addendum — Long Branch Bozulması ve Symbol Bias
+
+`ce_supcon_long_symbol_v2` için `z_long` pressure probe bozulmasının ana açıklaması olarak symbol bias çok güçlü bir aday görünüyor.
+
+Test split embedding comparison özeti:
+
+- `ce_supcon_long_v1 / z_long`
+  - `mean_nn_label_agreement = 0.8080`
+  - `mean_nn_symbol_agreement = 0.2987`
+  - `top1_symbol_match_rate = 0.3696`
+
+- `ce_supcon_long_symbol_v2 / z_long`
+  - `mean_nn_label_agreement = 0.4748`
+  - `mean_nn_symbol_agreement = 0.9150`
+  - `top1_symbol_match_rate = 0.9778`
+
+Bu tablo şu yorumu destekliyor:
+
+- `v1` long latent komşuluklarını esas olarak semantik / label benzerliği üzerinden kuruyor
+- `symbol_v2` long latent ise komşuluklarını neredeyse doğrudan symbol kimliği üzerinden kuruyor
+
+Bu nedenle pressure probe'daki `z_long` çöküşü:
+
+- sadece karar sınırının biraz kayması değil
+- latent geometri organizasyon ekseninin değişmesi
+
+şeklinde okunmalı.
+
+Pressure confusion matrix ile birlikte okunduğunda:
+
+- `v1` long branch'te ana sorun daha çok `neutral` örnekleri pressure tarafına itmek
+- `symbol_v2` long branch'te ise hem `neutral` bozuluyor hem de `up_pressure / down_pressure` yön ayrımı zayıflıyor
+
+En olası açıklama:
+
+- `symbol-aware` müdahale, `z_long` latent'ini semantik pressure manifold'u yerine symbol manifold'una çekmiş olabilir
+
+Fused taraf için not:
+
+- `symbol_v2 / z_fused` temsilinde symbol bias artmış olsa da pressure probe hâlâ güçlü kalıyor
+- bu da short branch'in veya fusion'ın long branch'teki bozulmayı kısmen absorbe ettiğini düşündürüyor
+
+## Addendum — `ce_supcon_long_symbol_v1` de Aynı Deseni Gösteriyor
+
+Sonraki kontrol olarak `ce_supcon_long_symbol_v1` de aynı pressure probe hattından geçirildi.
+
+Probe özeti:
+
+- `z_short` linear macro F1: `0.5411`
+- `z_long` linear macro F1: `0.1967`
+- `z_fused` linear macro F1: `0.5348`
+
+Bu dağılım `symbol_v2` ile aynı yönü gösteriyor:
+
+- short taraf güçlü
+- fused taraf kullanılabilir
+- long taraf belirgin biçimde zayıf
+
+Embedding comparison da bunu destekliyor:
+
+- `ce_supcon_long_symbol_v1 / z_long`
+  - `mean_nn_label_agreement = 0.4840`
+  - `mean_nn_symbol_agreement = 0.9404`
+  - `top1_symbol_match_rate = 0.9893`
+
+Bu değerler `symbol_v2` ile neredeyse aynı ölçekte.
+
+Sonuç:
+
+- `symbol-aware` varyantlarda long branch bozulması yalnızca `v2`ye özgü görünmüyor
+- sorun daha çok bu ailenin `z_long` temsili symbol shortcut'a çekmesi olabilir
+- `v1` ile `v2` arasındaki fark, bu temel problemi çözmekten çok başka eksenlerde küçük oynama yapmış görünüyor
+
+Kısa araştırma çıkarımı:
+
+- `ce_supcon_long_v1` şu anda pressure semantiği taşıyan sağlıklı long latent için istisna koşu gibi duruyor
+- `symbol-aware` koşular ise short ve fused tarafı korurken, long branch'i semantik açıdan pahalı bir symbol bias'a itiyor olabilir
+
 ---
 
 **Status**: Complete ✓
