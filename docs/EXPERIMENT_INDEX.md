@@ -41,6 +41,84 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 | `CE + SupCon` | long symbol v1 | rejected | geometry yeniden symbol-heavy oldu |
 | `CE + SupCon` | long symbol v2 | rejected | neutral same-symbol mask yönü düzeltmedi; geometry hâlâ symbol-heavy |
 
+## Metrics Snapshot
+
+### Classifier — Val Macro F1
+
+| Variant | Val macro F1 |
+|---|---|
+| ce_only | 0.8901 |
+| ce_supcon_v1 | 0.8908 |
+| ce_supcon_long_v1 | 0.8900 |
+| ce_supcon_long_v2 | 0.8892 |
+| ce_supcon_long_symbol_v1 | 0.8906 |
+| ce_supcon_long_symbol_v2 | 0.8890 |
+
+Yorum: tüm koşularda F1 değerleri çok yakın. Bu metrik tek başına deney kararını belirleyemiyor.
+
+### Latent Geometry — `z_long` NN Metrikleri
+
+Karar metriği olarak `z_long` seçilmesinin nedeni: `z_short` tüm koşularda stabil kalıyor, asıl değişim ve risk buraya yansıyor.
+
+**Val split:**
+
+| Variant | label agree ↑ | symbol agree ↓ |
+|---|---|---|
+| ce_only | 0.4442 | 0.9093 |
+| ce_supcon_v1 | 0.4746 | 0.9493 |
+| **ce_supcon_long_v1** | **0.8096** | **0.3171** |
+| ce_supcon_long_v2 | 0.7955 | 0.4543 |
+| ce_supcon_long_symbol_v1 | 0.4741 | 0.9475 |
+| ce_supcon_long_symbol_v2 | 0.4661 | 0.9233 |
+
+**Test split:**
+
+| Variant | label agree ↑ | symbol agree ↓ |
+|---|---|---|
+| ce_only | 0.4504 | 0.9115 |
+| ce_supcon_v1 | 0.4838 | 0.9470 |
+| **ce_supcon_long_v1** | **0.8080** | **0.2987** |
+| ce_supcon_long_v2 | 0.7965 | 0.4543 |
+| ce_supcon_long_symbol_v1 | 0.4840 | 0.9404 |
+| ce_supcon_long_symbol_v2 | 0.4748 | 0.9150 |
+
+### Latent Geometry — `z_fused` NN Metrikleri
+
+**Val split:**
+
+| Variant | label agree ↑ | symbol agree ↓ |
+|---|---|---|
+| ce_only | 0.8437 | 0.5739 |
+| ce_supcon_v1 | 0.8431 | 0.6001 |
+| **ce_supcon_long_v1** | **0.8424** | **0.2986** |
+| ce_supcon_long_v2 | 0.8401 | 0.3530 |
+| ce_supcon_long_symbol_v1 | 0.8451 | 0.6362 |
+| ce_supcon_long_symbol_v2 | 0.8446 | 0.6111 |
+
+**Test split:**
+
+| Variant | label agree ↑ | symbol agree ↓ |
+|---|---|---|
+| ce_only | 0.8445 | 0.5970 |
+| ce_supcon_v1 | 0.8397 | 0.6346 |
+| **ce_supcon_long_v1** | **0.8425** | **0.2784** |
+| ce_supcon_long_v2 | 0.8414 | 0.3613 |
+| ce_supcon_long_symbol_v1 | 0.8348 | 0.6509 |
+| ce_supcon_long_symbol_v2 | 0.8394 | 0.6595 |
+
+### Pressure Probe — `intact` Altkümesi Linear F1 (test split)
+
+Majority baseline: `0.3015`
+
+| Variant | z_short | z_long | z_fused |
+|---|---|---|---|
+| ce_only | 0.5227 | 0.2067 | 0.5254 |
+| **ce_supcon_long_v1** | **0.5257** | **0.4842** | **0.5407** |
+| ce_supcon_long_symbol_v1 | 0.5411 | 0.1967 | 0.5348 |
+| ce_supcon_long_symbol_v2 | 0.5476 | 0.2278 | 0.5408 |
+
+Not: pressure probe, eğitim hedefinin dışındaki `intact` içi yönsel baskı semantiğini ölçüyor. Label tanımı henüz validate edilmediğinden bu metrik teşhis aracı olarak okunmalı, doğrudan karar kriteri olarak değil.
+
 ## CE-Only
 
 Klasör:

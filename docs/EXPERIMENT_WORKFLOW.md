@@ -1,36 +1,35 @@
 # Experiment Workflow
 
-Bu belge, Stage 1A deneyleri için ortak çalışma akışını tanımlar.
+This document defines the standard working process for Stage 1A experiments.
 
-Amaç:
+Goals:
+- standardize plan, run, analysis, and documentation steps
+- reduce context loss across sessions
+- make required artifacts explicit
 
-- deney planı, koşu, analiz ve dokümantasyon adımlarını standartlaştırmak
-- yeni oturumlarda bağlam kaybını azaltmak
-- hangi artefaktların zorunlu olduğunu açık hale getirmek
+## 1. When to Open a New Experiment
 
-## 1. Yeni Deney Ne Zaman Açılır
+Open a new experiment plan when:
 
-Yeni bir experiment plan aç:
+- a new objective variant is being tested
+- a new masking, sampling, or batch strategy is introduced within the same objective
+- a different checkpoint family is created
+- the success criteria or baseline to beat changes
 
-- yeni objective varyantı deneniyorsa
-- aynı objective içinde yeni masking / sampling / batch strategy deneniyorsa
-- farklı checkpoint ailesi oluşuyorsa
-- başarı kriteri veya baseline to beat değişiyorsa
+Minor repeats within the same experiment chain can update the existing plan.
 
-Aynı deney zincirinin küçük tekrarları için mevcut plan güncellenebilir.
+## 2. Where Experiment Documents Live
 
-## 2. Deney Dokümanı Nerede Yaşar
-
-Deney planı ve readout notları:
+Experiment plans and readout notes:
 
 - `docs/experiments/<family>/`
 
-Örnek:
+Examples:
 
 - `docs/experiments/ce_only/`
 - `docs/experiments/ce_supcon/`
 
-Karar / implementasyon notları ise:
+Decision and implementation notes:
 
 - `docs/worklogs/`
 
@@ -42,109 +41,107 @@ Plan:
 YYYY-MM-DD-<variant>-plan.md
 ```
 
-Sonuç:
+Readout:
 
 ```text
 YYYY-MM-DD-<variant>-readout.md
 ```
 
-Örnek:
+Examples:
 
 - `2026-04-17-ce-supcon-long-symbol-v2-plan.md`
 - `2026-04-17-ce-supcon-long-symbol-v2-readout.md`
 
-## 4. Run Öncesi Checklist
+## 4. Pre-Run Checklist
 
-Her yeni koşudan önce:
+Before every new run:
 
-1. baseline to beat net mi
-2. deney hipotezi tek cümlede yazılı mı
-3. değişen şey tekil ve anlaşılır mı
-4. checkpoint adı açık mı
-5. plan notunda:
+1. Is the baseline to beat clearly identified?
+2. Is the experiment hypothesis written in one sentence?
+3. Is exactly one thing changing relative to the baseline?
+4. Is the checkpoint name unambiguous?
+5. Does the plan note include:
    - method
    - command
    - success criteria
    - planned readout
-   yazıyor mu
-6. `docs/EXPERIMENT_INDEX.md` içinde bu koşu `in_progress` olarak görünüyor mu
+6. Is this run marked as `in_progress` in `docs/EXPERIMENT_INDEX.md`?
 
-## 5. Eğitim Koşusu Sırasında
+## 5. During Training
 
-Koşu sırasında not alınması gereken minimum bilgi:
+Minimum information to record while the run is active:
 
 - training device
 - early stopping epoch
-- best val macro-F1
-- dikkate değer training davranışı
+- best val macro F1
+- any notable training behavior
 
-Bu notlar sonradan readout içinde özetlenecek.
+These notes will be summarized in the readout.
 
-## 6. Run Sonrası Zorunlu Artefaktlar
+## 6. Required Post-Run Artifacts
 
-Bir deney tamamlandıktan sonra minimum olarak:
+After a run completes, the minimum required artifacts are:
 
-1. eğitim özeti
+1. Training summary
+   - `metadata.json`
+   - `history.json`
 
-- `metadata.json`
-- `history.json`
+2. Val artifacts
+   - latent export
+   - analyze
+   - embedding compare
 
-2. val artefaktları
+3. Test artifacts
+   - latent export
+   - analyze
+   - embedding compare
 
-- latent export
-- analyze
-- embedding compare
+4. Notebook or manual inspection if needed
 
-3. test artefaktları
+## 7. Standard Post-Run Checklist
 
-- latent export
-- analyze
-- embedding compare
+Default order after a run finishes:
 
-4. gerekiyorsa notebook / manuel inceleme
+1. Read training summary
+2. Export val latents
+3. Run val analyze
+4. Run val embedding compare
+5. Export test latents
+6. Run test analyze
+7. Run test embedding compare
+8. Compare side-by-side with baseline to beat
+9. Write readout document
+10. Update `EXPERIMENT_INDEX.md`:
+    - Add row to Current Summary table
+    - Add numerical values to all Metrics Snapshot tables (see Section 10)
+11. Update family README timeline if needed
 
-## 7. Standart Post-Run Checklist
+## 8. Standard Comparison Axes
 
-Koşu bittikten sonra varsayılan sıra:
+For every readout, cover the following axes:
 
-1. eğitim özetini oku
-2. val latent export al
-3. val analyze çalıştır
-4. val embedding compare çalıştır
-5. test latent export al
-6. test analyze çalıştır
-7. test embedding compare çalıştır
-8. baseline to beat ile yan yana kıyas yap
-9. readout dokümanı yaz
-10. `EXPERIMENT_INDEX.md` güncelle
-11. gerekiyorsa family README timeline güncelle
+### Classifier
 
-## 8. Standart Kıyas Eksenleri
+- best val macro F1
+- test generalization signal
 
-Her readout'ta mümkün olduğunca şu eksenlere bak:
-
-### classifier
-
-- best val macro-F1
-- test genelleme sinyali
-
-### embedding
+### Embedding
 
 - `z_short`
 - `z_long`
 - `z_fused`
-- varsa branch-specific projection (`z_long_proj` gibi)
+- branch-specific projection if present (e.g. `z_long_proj`)
 
-İzlenecek ana metrikler:
+Key metrics to track:
 
 - mean NN label agreement
 - mean NN symbol agreement
 - top-1 label match
 - top-1 symbol match
 
-### bucket
+### Bucket
 
-Özellikle:
+Priority buckets:
 
 - `borderline_intact_break`
 - `wick_sweep_up`
@@ -153,9 +150,9 @@ Her readout'ta mümkün olduğunca şu eksenlere bak:
 - `close_confirmed_break_up`
 - `close_confirmed_break_down`
 
-## 9. Readout Yazım Kuralı
+## 9. Readout Writing Rules
 
-Bir readout notu mutlaka şunları içermeli:
+A readout note must include:
 
 - experiment setup
 - classifier summary
@@ -165,50 +162,70 @@ Bir readout notu mutlaka şunları içermeli:
 - overall decision
 - next direction
 
-Kritik kural:
+Critical rule:
 
-- yalnızca macro-F1 ile karar verilmez
-- latent geometry ana karar eksenidir
+- decisions are never made on macro F1 alone
+- latent geometry is the primary decision axis
 
-## 10. Experiment Index Ne Zaman Güncellenir
+## 10. When to Update the Experiment Index
 
-Index şu durumlarda güncellenir:
+The index is updated when:
 
-- yeni koşu başladığında `in_progress` satırı eklenir veya güncellenir
-- readout tamamlandığında status:
+- a new run starts: add or update an `in_progress` row
+- a readout is complete: set status to one of:
   - `reference`
   - `best current`
   - `mixed`
   - `rejected`
-  olarak netleştirilir
 
-## 11. Family README Ne Zaman Güncellenir
+### Metrics Snapshot Tables
 
-Family README şu durumda güncellenir:
+`EXPERIMENT_INDEX.md` maintains four metric tables:
 
-- yeni readout sonrası deney zincirinin anlatısı değişiyorsa
-- yeni varyant timeline'a ekleniyorsa
-- “best current” varyant değişiyorsa
+- Classifier — Val Macro F1
+- Latent Geometry — `z_long` NN metrics (val + test)
+- Latent Geometry — `z_fused` NN metrics (val + test)
+- Pressure Probe — `intact` subset linear F1 (test)
 
-## 12. Worklog Ne Zaman Gerekir
+Adding a new row to each table after every completed readout is **required**.
 
-Ek olarak `worklog` aç:
+Values to add:
 
-- yeni objective / masking / sampling mekanizması implemente edildiyse
-- latent analysis altyapısı değiştiyse
-- araştırma yönünü değiştiren tasarım kararı alındıysa
+- val macro F1
+- `z_long` / `z_fused` label agreement and symbol agreement (val and test)
+- pressure probe z_short / z_long / z_fused linear F1 if the probe was run
 
-Özet:
+The pressure probe is not run for every experiment — it is a selective diagnostic tool. If run, add to the table; if not run, leave the row empty.
 
-- implementasyon / karar -> `worklog`
-- deney planı / deney sonucu -> `experiments`
+The current best candidate is always shown in bold (`**`) in all tables.
 
-## 13. Minimum Okuma Sırası
+## 11. When to Update Family README
 
-Yeni bir oturumda hızlı toparlama için:
+Update the family README when:
+
+- the narrative of the experiment chain changes after a new readout
+- a new variant is added to the timeline
+- the "best current" variant changes
+
+## 12. When a Worklog Is Required
+
+Open a worklog when:
+
+- a new objective, masking, or sampling mechanism is implemented
+- the latent analysis infrastructure changes
+- a design decision is made that changes the research direction
+
+Summary:
+
+- implementation / decision → `worklog`
+- experiment plan / experiment result → `experiments`
+
+## 13. Minimum Reading Order
+
+To get up to speed quickly in a new session:
 
 1. `docs/EXPERIMENT_INDEX.md`
-2. ilgili family README
-3. aktif plan notu
+2. relevant family README
+3. active plan note
 4. baseline to beat readout
-5. son başarısız / son başarılı varyant readout'ları
+5. most recent rejected and most recent accepted variant readouts

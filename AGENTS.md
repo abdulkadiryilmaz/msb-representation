@@ -6,15 +6,16 @@
 - Core setup: short window `48`, long window `288`, shared-anchor dual-window dataset
 - Default Stage 1A dataset universe: `core4` = BTC, ETH, SOL, XRP
 
-## Dil ve Dokümantasyon
-- README ve repo içi ana dokümantasyon Türkçe tutulur
-- Teknik terimler gerekiyorsa İngilizce bırakılabilir, ama açıklama dili Türkçe olmalı
-- Araştırma framing / kavramsal temel belgeleri `docs/foundations/` altında tutulur
-- Deney planları ve deney sonuç okumaları `docs/experiments/` altında tutulur
-- Mimari değişiklik, veri sözleşmesi değişikliği ve yön değiştirici kararlar `docs/worklogs/` altında belgelenir
-- Genel deney süreci: `docs/EXPERIMENT_WORKFLOW.md`
-- Üst seviye deney özeti: `docs/EXPERIMENT_INDEX.md`
-- Worklog rehberi: `docs/WORKLOG_GUIDE.md`
+## Language and Documentation
+- Agent instruction files (`AGENTS.md`, `CLAUDE.md`, `EXPERIMENT_WORKFLOW.md`) are in English
+- Research content (worklogs, experiment readouts, framing docs) is written in Turkish
+- Technical terms may remain in English regardless of document language
+- Research framing and conceptual foundation documents: `docs/foundations/`
+- Experiment plans and readouts: `docs/experiments/`
+- Architecture changes, data contract changes, and direction-setting decisions: `docs/worklogs/`
+- Experiment workflow: `docs/EXPERIMENT_WORKFLOW.md`
+- Top-level experiment summary: `docs/EXPERIMENT_INDEX.md`
+- Worklog guide: `docs/WORKLOG_GUIDE.md`
 
 ## Research Framing
 - Stage 1A is `MSB-oriented representation learning`
@@ -64,17 +65,40 @@
 - Don’t bulk-import old pipeline code unless Stage 1A directly depends on it
 - Don’t bring `signals/`, replay/backtest state logic, or production checkpoint conventions into this repo by default
 
-## Repo Sınırı
-- Bu repo araştırma reposudur
-- `coin-oracle` production / replay / signal execution tarafı olarak kalır
-- Ortak utility taşınacaksa önce Stage 1A bağımlılığı gerçekten var mı kontrol edilir
-- "Belki lazım olur" diye eski modül kopyalanmaz
+## Repository Boundary
+- This is a research repository
+- `coin-oracle` remains the production / replay / signal execution side
+- Before porting shared utilities, verify that Stage 1A actually depends on them
+- Do not copy old modules on a "might be useful" basis
+
+## Experiment Workflow
+- Before starting a new experiment, follow the pre-run checklist in `docs/EXPERIMENT_WORKFLOW.md`
+- After a run completes, apply the post-run checklist in full
+- After each readout, add a new row to all four Metrics Snapshot tables in `docs/EXPERIMENT_INDEX.md`:
+  - Classifier — Val Macro F1
+  - `z_long` NN metrics (val + test: label agreement, symbol agreement)
+  - `z_fused` NN metrics (val + test: label agreement, symbol agreement)
+  - Pressure Probe result (if run)
+- Always read the current best candidate from `docs/EXPERIMENT_INDEX.md`; the static reference in AGENTS.md may be stale
+
+## Evaluation Principles
+- Val macro F1 alone is not a decision criterion
+- The primary decision axis is latent geometry: `mean_nn_label_agreement` and `mean_nn_symbol_agreement`
+- Every readout must compare at minimum three representations: `z_short`, `z_long`, `z_fused`
+- Accept/reject decisions are based primarily on `z_long` and `z_fused` NN metrics
+- High symbol agreement (>0.5) indicates the latent is anchored to coin identity rather than structure; this alone can justify rejection
 
 ## Common Workflows
 - Build dataset:
   - `python scripts/build_stage1a_dataset.py --data-root data --exchange binance --timeframe 15m --bars-per-day 96 --dataset-profile core4 --train-end 2025-09-30 --val-end 2025-12-31`
 - Train CE-only baseline:
   - `python scripts/train_stage1a.py --dataset-root data/stage1a/binance/15m --epochs 50 --batch-size 32`
+- Latent export (val split):
+  - `python scripts/export_stage1a_latents.py --dataset-root data/stage1a/binance/15m --checkpoint-dir data/stage1a/binance/15m/checkpoints/<variant> --split val`
+- Analyze latents:
+  - `python scripts/analyze_stage1a_latents.py --latent-path <export.npz> --output-dir <checkpoint>/analysis/<split>_latents`
+- Embedding compare (baseline to beat vs. current):
+  - `python scripts/analyze_stage1a_latents.py --compare --baseline-latent <baseline.npz> --candidate-latent <candidate.npz>`
 
 ## Documentation
 - `docs/foundations/stage1-msb-representation-framing.md`
