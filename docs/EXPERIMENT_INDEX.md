@@ -11,9 +11,12 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 
 ## Foundations
 
+- `docs/foundations/market-structure-edge-program.md`
 - `docs/foundations/stage1-msb-representation-framing.md`
 
-Bu belge, Stage 1A araştırma yönünü ve representation-learning çerçevesini tanımlar. Deney okumalarından önce buradan başlamak en doğru giriş olur.
+`market-structure-edge-program.md`, repo üstü program hedefini, mission/thesis ayrımını ve nihai `TradePlan` çıktısını tanımlar.
+
+`stage1-msb-representation-framing.md`, Stage 1A araştırma yönünü ve representation-learning çerçevesini tanımlar. Deney okumalarından önce bu iki foundations belgesiyle başlamak en doğru giriş olur.
 
 ## Current Active Experiment
 

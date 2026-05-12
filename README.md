@@ -124,6 +124,9 @@ src/msb_repr/
 
 ## Temel Dokümanlar
 
+- `docs/foundations/market-structure-edge-program.md`
+- `docs/foundations/stage1-msb-representation-framing.md`
+- `docs/foundations/stage1a-latent-concepts.md`
 - `docs/STAGE1A_IMPLEMENTATION_PLAN.md`
 - `docs/MULTI_SCALE_MSB_INTERPRETATION.md`
 - `docs/TEMPORAL_CNN_BASICS.md`
