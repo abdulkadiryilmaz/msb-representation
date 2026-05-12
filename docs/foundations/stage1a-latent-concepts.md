@@ -244,6 +244,41 @@ Başka deyişle:
 
 ---
 
+## Edge Ne Demek?
+
+Bu program bağlamında `edge`, tek bir işlemin kesin kazanması değildir.
+
+Edge şu anlama gelir:
+
+> MSB çevresindeki yapısal bilgiyi kullanarak üretilen `no_trade` veya `TradePlan` kararlarının, yeterli örneklemde ve gerçekçi maliyetler sonrası, naive veya baseline planlara göre pozitif beklenen değer üretmesi.
+
+Başka deyişle:
+
+- benzer MSB bağlamları tekrarlandığında
+- doğru entry / invalidation / target ile
+- fee ve slippage sonrası
+- yeterince çok denemede
+- kazanç dağılımı zarar dağılımından anlamlı biçimde iyi mi?
+
+Basit expectancy sezgisi:
+
+```text
+expectancy = win_rate * avg_win - loss_rate * avg_loss - fees - slippage
+```
+
+Bu yüzden yüksek win-rate tek başına edge değildir. Düşük win-rate ile de edge olabilir; yeter ki ortalama kazanç / ortalama kayıp ve işlem maliyetleri sonrasında beklenen değer pozitif kalsın.
+
+Stage sınırı açısından:
+
+- Stage 1A edge üretmez; yapısal temsil üretir
+- Stage 1B edge üretmez; yapısal evrim beklentisini test eder
+- Stage 2 edge adayını seçer; `no_trade` / `TradePlan` ayrımını yapar
+- `coin-oracle` edge'i replay / live sonuç dağılımında ölçer
+
+Dolayısıyla Stage 1A sonuçları doğrudan PnL ile yargılanmamalıdır. Stage 1A'nın edge'e katkısı, daha iyi temsil sayesinde sonraki aşamaların daha iyi `TradePlan` üretmesine yardım edip etmediğiyle değerlendirilmelidir.
+
+---
+
 ## Kısa Hatırlatma
 
 Bu not için en kısa özet:
@@ -254,3 +289,4 @@ Bu not için en kısa özet:
 - `directional pressure` özellikle `intact` içinde aranır
 - probe, latent'in optimize edilmemiş bir semantiği taşıyıp taşımadığını anlamak için kullanılır
 - linear probe iyi ise, ilgili bilgi latent'te daha temiz yerleşmiş demektir
+- edge, tekil sinyal doğruluğu değil; `TradePlan` kararlarının uzun örneklemde pozitif expectancy üretmesidir

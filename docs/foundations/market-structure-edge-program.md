@@ -12,7 +12,7 @@ This document defines the repo-level umbrella program, not a single implementati
 
 - Program name: `Market Structure Edge Program`
 - Mission: extract systematic, measurable, executable trade edge from market structure breaks
-- Thesis: MSB semantics can be modeled through learned structural representations and used for forward structure and tradability modeling
+- Thesis: MSB is not only a technical event to detect; if represented well, it carries structural information for entry, invalidation, target, and no-trade decisions
 - North Star output: `no_trade` or an executable `TradePlan`
 - Current `TradePlan` fields are a draft target contract, not a stable implementation contract
 - Stage 1A should not be judged directly by PnL; it should be judged by representation quality and downstream usefulness
@@ -43,7 +43,7 @@ Burada `program`, tek bir kod reposundan daha geniş bir girişimi ifade eder.
 
 - `msb-representation`: Stage 1A temsil öğrenimi araştırma projesi
 - Stage 1B: forward structure forecasting hattı
-- Stage 2: tradability / quality modeling hattı
+- Stage 2: TradePlan viability / tradability hattı
 - `coin-oracle`: replay, execution ve uygulama hattı
 - `Market Structure Edge Program`: bu parçaların tamamını yöneten üst amaç
 
@@ -70,18 +70,20 @@ Bu mission, doğrudan "her break'te işlem aç" anlamına gelmez. Amaç:
 
 ## Research Thesis
 
-Market Structure Break semantiği, öğrenilmiş yapısal temsiller üzerinden modellenebilir.
+Market Structure Break, yalnızca tespit edilecek bir teknik olay değildir.
 
-Bu temsiller:
+Doğru temsil edildiğinde MSB yapısı:
 
-- sadece mevcut `bullish / bearish / intact` durumunu ayırmakla kalmamalı
-- farklı coinlerde benzer yapıları hizalayabilmeli
-- gelecekteki yapısal davranışa bilgi taşımalı
-- tradability / quality tahmini için faydalı olmalı
+- entry kararını
+- invalidation seviyesini
+- target potansiyelini
+- `trade` / `no_trade` ayrımını
 
-Programın araştırma iddiası şudur:
+destekleyen yapısal bilgi taşır.
 
-> MSB semantiğini taşıyan latent temsiller, forward structure ve tradability kalitesi ile birleştirildiğinde, tekrar edebilir trade edge'i üretmek için kullanılabilir.
+Programın araştırma tezi şudur:
+
+> Market Structure Break, yalnızca tespit edilecek bir teknik olay değil; doğru temsil edildiğinde entry, invalidation, target ve no-trade kararlarını destekleyen yapısal bilgi taşır. Bu nedenle MSB yapısını öğrenen bir sistem, kırılımın işlem değerini değerlendirerek uygulanabilir TradePlan üretmek için temel oluşturabilir.
 
 Bu iddia Stage 1A'da tek başına kanıtlanmaz. Stage 1A yalnızca zincirin ilk halkasını test eder.
 
@@ -193,22 +195,25 @@ Rol:
 
 Bu katman trade planını uygular. Yapısal latent öğrenimin ana yeri değildir.
 
-### Stage 2 — Tradability / Quality
+### Stage 2 — TradePlan Viability / Tradability
 
 Soru:
 
-> Teknik veya öngörülen break işlem alınmaya değer kalite taşıyor mu?
+> Teknik veya öngörülen break, uygulanabilir bir `TradePlan`'a dönüştürülebilir mi?
 
 Rol:
 
+- `no_trade` vs uygulanabilir `TradePlan` ayrımının sahibi olmak
+- trade edilmeye değer break ile trade edilmeyecek break'i ayırmak
+- `quality_score` üretmek
+- entry zone / invalidation / target / horizon alanlarını üretmek veya skorlamak
 - follow-through tahmini
 - MFE / MAE profili
 - risk / ödül potansiyeli
 - path davranışı
-- setup kalitesi
-- `trade` vs `no_trade` ayrımı
+- setup kalitesi ve plan uygulanabilirliği
 
-Stage 2 pozisyon yönetim motoru değildir. Görevi, execution öncesi kalite ve risk/ödül proxy'lerini üretmektir.
+Stage 2 pozisyon yönetim motoru değildir. Görevi, execution öncesinde "bu yapıdan TradePlan çıkar mı?" sorusunu yanıtlamak ve `coin-oracle` tarafına yeterince somut plan girdisi sağlamaktır.
 
 ### Stage 1B — Forward Structure Forecasting
 
@@ -267,7 +272,7 @@ Bu nedenle ara metrikler program hedefiyle şu şekilde bağlanmalıdır:
 
 - Stage 1A latent geometry iyi olmalı, çünkü Stage 1B / Stage 2'nin yapısal girdisi buradan gelir.
 - Stage 1B forward tahmini iyi olmalı, çünkü TradePlan zamanlama ve yön bilgisini buradan alır.
-- Stage 2 kalite ayrımı iyi olmalı, çünkü her doğru yapı trade edilebilir değildir.
+- Stage 2 `no_trade` / `TradePlan` ayrımı iyi olmalı, çünkü her doğru yapı uygulanabilir trade planına dönüşmez.
 - coin-oracle replay sonucu iyi olmalı, çünkü nihai edge ancak execution dahil ölçülebilir.
 
 ---
@@ -288,7 +293,7 @@ Bu nedenle ara metrikler program hedefiyle şu şekilde bağlanmalıdır:
 
 ### Research Questions
 
-- Stage 2 için ilk tradability proxy'leri ne olmalı?
+- Stage 2 için ilk TradePlan viability / tradability proxy'leri ne olmalı?
 - `quality_score` kalibrasyonu hangi replay hedefleriyle validate edilmeli?
 - Stage 1A latent'in Stage 2'ye transferi hangi minimal probe ile test edilmeli?
 - coin-oracle tarafında `no_trade` karar kalitesi nasıl ölçülmeli?
