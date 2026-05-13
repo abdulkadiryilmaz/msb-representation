@@ -84,6 +84,8 @@ class Stage1AModel(nn.Module):
         z_short: int = 64,
         z_long: int = 32,
         num_classes: int = 3,
+        num_pressure_classes: int | None = None,
+        num_maturity_classes: int | None = None,
         projection_dim: int = 64,
         long_projection_dim: int | None = None,
         hidden_channels: int = 64,
@@ -110,6 +112,28 @@ class Stage1AModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(fused_dim, num_classes),
         )
+        self.pressure_classifier = (
+            nn.Sequential(
+                nn.Linear(fused_dim, fused_dim),
+                nn.LayerNorm(fused_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(fused_dim, num_pressure_classes),
+            )
+            if num_pressure_classes is not None
+            else None
+        )
+        self.maturity_classifier = (
+            nn.Sequential(
+                nn.Linear(fused_dim, fused_dim),
+                nn.LayerNorm(fused_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(fused_dim, num_maturity_classes),
+            )
+            if num_maturity_classes is not None
+            else None
+        )
         self.projection_head = ProjectionHead(fused_dim, projection_dim=projection_dim, dropout=dropout)
         self.long_projection_head = (
             ProjectionHead(z_long, projection_dim=long_projection_dim, dropout=dropout)
@@ -132,6 +156,10 @@ class Stage1AModel(nn.Module):
         }
         if self.long_projection_head is not None:
             outputs["z_long_proj"] = self.long_projection_head(z_long)
+        if self.pressure_classifier is not None:
+            outputs["pressure_logits"] = self.pressure_classifier(z_fused)
+        if self.maturity_classifier is not None:
+            outputs["maturity_logits"] = self.maturity_classifier(z_fused)
         return outputs
 
 

@@ -41,6 +41,25 @@ def test_stage1a_dataset_len_and_item():
     assert meta.symbol == "BTC_USDT_15m"
 
 
+def test_stage1a_dataset_item_includes_optional_factor_targets():
+    dataset = Stage1ADualWindowDataset(
+        short_windows=np.ones((2, 10, 48), dtype=np.float32),
+        long_windows=np.ones((2, 10, 288), dtype=np.float32),
+        labels=np.array([0, 1], dtype=np.int64),
+        timestamps=np.array([100, 200], dtype=np.int64),
+        symbols=["BTC_USDT_15m", "ETH_USDT_15m"],
+        factor_targets=np.array([3, 6], dtype=np.int64),
+        pressure_targets=np.array([1, 4], dtype=np.int64),
+        maturity_targets=np.array([2, 3], dtype=np.int64),
+    )
+
+    _, _, _, meta = dataset[0]
+
+    assert meta.factor_target == 3
+    assert meta.pressure_target == 1
+    assert meta.maturity_target == 2
+
+
 def test_stage1a_model_forward_shapes():
     model = Stage1AModel(short_input_channels=10, long_input_channels=10)
     short_x = np.ones((4, 10, 48), dtype=np.float32)
@@ -69,6 +88,25 @@ def test_stage1a_model_forward_shapes_with_long_projection():
     )
 
     assert tuple(outputs["z_long_proj"].shape) == (4, 16)
+
+
+def test_stage1a_model_forward_shapes_with_auxiliary_heads():
+    model = Stage1AModel(
+        short_input_channels=10,
+        long_input_channels=10,
+        num_pressure_classes=5,
+        num_maturity_classes=4,
+    )
+    short_x = np.ones((4, 10, 48), dtype=np.float32)
+    long_x = np.ones((4, 10, 288), dtype=np.float32)
+
+    outputs = model(
+        model.short_encoder.stem[0].weight.new_tensor(short_x),
+        model.long_encoder.stem[0].weight.new_tensor(long_x),
+    )
+
+    assert tuple(outputs["pressure_logits"].shape) == (4, 5)
+    assert tuple(outputs["maturity_logits"].shape) == (4, 4)
 
 
 def test_symbol_balanced_batch_sampler_mixes_symbols():

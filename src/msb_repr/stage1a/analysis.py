@@ -20,7 +20,25 @@ from msb_repr.stage1a.labels import find_last_pivot_high, find_last_pivot_low
 from msb_repr.stage1a.model import Stage1AModel, get_device
 
 LABEL_NAMES = {0: "intact", 1: "bullish", 2: "bearish"}
-PRESSURE_LABEL_NAMES = {-1: "non_intact", 0: "neutral", 1: "up_pressure", 2: "down_pressure"}
+PRESSURE_LABEL_NAMES = {
+    -1: "non_intact",
+    0: "neutral",
+    1: "up_pressure",
+    2: "down_pressure",
+    3: "mixed_pressure",
+    4: "non_intact",
+}
+FACTOR_TARGET_NAMES = {
+    0: "clean_intact",
+    1: "wick_sweep_up",
+    2: "wick_sweep_down",
+    3: "borderline_up",
+    4: "borderline_down",
+    5: "borderline_mixed",
+    6: "bullish_confirmed",
+    7: "bearish_confirmed",
+}
+MATURITY_TARGET_NAMES = {0: "clean", 1: "wick_sweep", 2: "borderline", 3: "confirmed"}
 
 
 @dataclass
@@ -60,6 +78,12 @@ def load_checkpoint_bundle(
         long_input_channels=int(metadata["long_input_channels"]),
         z_short=int(metadata["z_short"]),
         z_long=int(metadata["z_long"]),
+        num_pressure_classes=(
+            int(metadata["num_pressure_classes"]) if metadata.get("num_pressure_classes") is not None else None
+        ),
+        num_maturity_classes=(
+            int(metadata["num_maturity_classes"]) if metadata.get("num_maturity_classes") is not None else None
+        ),
         projection_dim=int(metadata.get("projection_dim", 64)),
         long_projection_dim=(
             int(metadata["long_projection_dim"]) if metadata.get("long_projection_dim") is not None else None
@@ -185,6 +209,128 @@ def build_domain_summary(
         "bear_final_excess": bear_final_excess,
         "bull_max_excess": bull_max_excess,
         "bear_max_excess": bear_max_excess,
+    }
+
+
+def _nanquantile(values: np.ndarray, q: float, fallback: float = 0.0) -> float:
+    finite = values[np.isfinite(values)]
+    if len(finite) == 0:
+        return fallback
+    return float(np.quantile(finite, q))
+
+
+def _factor_thresholds(domain_summary: dict[str, np.ndarray]) -> dict[str, float]:
+    directional_excess = np.concatenate(
+        [
+            np.abs(domain_summary["bull_final_excess"][np.isfinite(domain_summary["bull_final_excess"])]),
+            np.abs(domain_summary["bear_final_excess"][np.isfinite(domain_summary["bear_final_excess"])]),
+        ]
+    )
+    return {
+        "high_vol_atr": _nanquantile(domain_summary["recent_atr_mean"], 0.85),
+        "high_vol_hl": _nanquantile(domain_summary["recent_hl_mean"], 0.85),
+        "true_break_excess": _nanquantile(directional_excess, 0.75, fallback=0.0),
+    }
+
+
+def build_structural_training_targets(
+    labels: np.ndarray,
+    domain_summary: dict[str, np.ndarray],
+    min_recent_break_bars: int,
+) -> dict[str, np.ndarray]:
+    """Build factor-aware training targets from Stage 1A domain summary arrays."""
+    thresholds = _factor_thresholds(domain_summary)
+    factor = np.zeros(len(labels), dtype=np.int64)
+    pressure = np.full(len(labels), 4, dtype=np.int64)  # non_intact
+    maturity = np.full(len(labels), 3, dtype=np.int64)  # confirmed
+
+    for idx, raw_label in enumerate(labels.astype(np.int64)):
+        bull_close_count = int(domain_summary["bull_close_count"][idx])
+        bear_close_count = int(domain_summary["bear_close_count"][idx])
+        bull_wick_count = int(domain_summary["bull_wick_count"][idx])
+        bear_wick_count = int(domain_summary["bear_wick_count"][idx])
+        bull_final_excess = (
+            float(domain_summary["bull_final_excess"][idx])
+            if np.isfinite(domain_summary["bull_final_excess"][idx])
+            else np.nan
+        )
+        bear_final_excess = (
+            float(domain_summary["bear_final_excess"][idx])
+            if np.isfinite(domain_summary["bear_final_excess"][idx])
+            else np.nan
+        )
+        high_vol = (
+            float(domain_summary["recent_atr_mean"][idx]) >= thresholds["high_vol_atr"]
+            or float(domain_summary["recent_hl_mean"][idx]) >= thresholds["high_vol_hl"]
+        )
+
+        if raw_label == 0:
+            bull_near = bull_close_count == min_recent_break_bars - 1
+            bear_near = bear_close_count == min_recent_break_bars - 1
+            bull_active = bull_near or bull_wick_count > 0
+            bear_active = bear_near or bear_wick_count > 0
+
+            if bull_active and bear_active:
+                direction = "mixed"
+            elif bull_active:
+                direction = "up"
+            elif bear_active:
+                direction = "down"
+            else:
+                direction = "none"
+
+            if direction == "up":
+                pressure[idx] = 1
+            elif direction == "down":
+                pressure[idx] = 2
+            elif direction == "mixed":
+                pressure[idx] = 3
+            else:
+                pressure[idx] = 0
+
+            if bull_near or bear_near:
+                maturity[idx] = 2
+                if direction == "up":
+                    factor[idx] = 3
+                elif direction == "down":
+                    factor[idx] = 4
+                else:
+                    factor[idx] = 5
+            elif bull_wick_count > 0 or bear_wick_count > 0:
+                maturity[idx] = 1
+                if direction == "up":
+                    factor[idx] = 1
+                elif direction == "down":
+                    factor[idx] = 2
+                else:
+                    factor[idx] = 5
+            elif high_vol and direction in {"up", "down"}:
+                maturity[idx] = 1
+                factor[idx] = 1 if direction == "up" else 2
+            else:
+                maturity[idx] = 0
+                factor[idx] = 0
+        elif raw_label == 1:
+            pressure[idx] = 4
+            maturity[idx] = 3
+            factor[idx] = 6
+            if bull_close_count < min_recent_break_bars or (
+                np.isfinite(bull_final_excess) and bull_final_excess < thresholds["true_break_excess"]
+            ):
+                factor[idx] = 6
+        elif raw_label == 2:
+            pressure[idx] = 4
+            maturity[idx] = 3
+            factor[idx] = 7
+            if bear_close_count < min_recent_break_bars or (
+                np.isfinite(bear_final_excess) and bear_final_excess < thresholds["true_break_excess"]
+            ):
+                factor[idx] = 7
+
+    return {
+        "factor_targets": factor,
+        "pressure_targets": pressure,
+        "maturity_targets": maturity,
     }
 
 

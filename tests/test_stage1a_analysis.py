@@ -9,6 +9,7 @@ from msb_repr.data.normalizer import Normalizer
 from msb_repr.stage1a.analysis import (
     build_domain_summary,
     build_pressure_label_frame,
+    build_structural_training_targets,
     compute_intact_pressure_labels,
     compute_cosine_neighbors,
     compute_hard_case_scores,
@@ -18,7 +19,12 @@ from msb_repr.stage1a.analysis import (
 from msb_repr.stage1a.config import Stage1ADatasetSpec
 from msb_repr.stage1a.dataset import Stage1ADualWindowDataset
 from msb_repr.stage1a.model import Stage1AModel
-from scripts.analyze_stage1a_latents import _assign_domain_bucket, _build_bucket_thresholds
+from scripts.analyze_stage1a_latents import (
+    _assign_domain_bucket,
+    _build_bucket_thresholds,
+    _full_distribution_rows,
+    _structural_state_fields,
+)
 from scripts.compare_stage1a_embedding_views import _embedding_bucket_rows
 
 
@@ -181,6 +187,110 @@ def test_domain_bucket_assignment_uses_bucket_names():
     assert bucket2 in {"true_break_down", "close_confirmed_break_down"}
 
 
+def test_domain_bucket_assignment_splits_borderline_intact_direction():
+    arrays = {
+        "labels": np.array([0, 0, 0], dtype=np.int64),
+        "bull_close_count": np.array([1, 0, 1], dtype=np.int64),
+        "bear_close_count": np.array([0, 1, 1], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 0, 0], dtype=np.int64),
+        "recent_atr_mean": np.array([0.01, 0.01, 0.01], dtype=np.float32),
+        "recent_hl_mean": np.array([0.01, 0.01, 0.01], dtype=np.float32),
+        "recent_close_std": np.array([0.01, 0.01, 0.01], dtype=np.float32),
+        "bull_final_excess": np.array([np.nan, np.nan, np.nan], dtype=np.float32),
+        "bear_final_excess": np.array([np.nan, np.nan, np.nan], dtype=np.float32),
+    }
+    thresholds = {
+        "high_vol_atr": 0.05,
+        "high_vol_hl": 0.05,
+        "true_break_excess": 0.1,
+        "chop_std": 0.05,
+    }
+
+    bucket0, _ = _assign_domain_bucket(arrays, 0, min_recent_break_bars=2, thresholds=thresholds)
+    bucket1, _ = _assign_domain_bucket(arrays, 1, min_recent_break_bars=2, thresholds=thresholds)
+    bucket2, _ = _assign_domain_bucket(arrays, 2, min_recent_break_bars=2, thresholds=thresholds)
+
+    assert bucket0 == "borderline_intact_break_up"
+    assert bucket1 == "borderline_intact_break_down"
+    assert bucket2 == "borderline_intact_break_mixed"
+
+
+def test_structural_state_fields_factorize_confirmed_pressure_and_holding():
+    arrays = {
+        "labels": np.array([0, 1, 1, 2], dtype=np.int64),
+        "preds": np.array([2, 1, 1, 2], dtype=np.int64),
+        "probs": np.array(
+            [
+                [0.4, 0.1, 0.5],
+                [0.1, 0.8, 0.1],
+                [0.1, 0.8, 0.1],
+                [0.1, 0.1, 0.8],
+            ],
+            dtype=np.float32,
+        ),
+        "symbols": np.array(["BTC", "ETH", "SOL", "XRP"]),
+        "recent_atr_mean": np.array([0.01, 0.01, 0.01, 0.01], dtype=np.float32),
+        "recent_hl_mean": np.array([0.01, 0.01, 0.01, 0.01], dtype=np.float32),
+        "recent_close_std": np.array([0.01, 0.01, 0.01, 0.01], dtype=np.float32),
+        "bull_close_count": np.array([0, 3, 3, 0], dtype=np.int64),
+        "bear_close_count": np.array([1, 0, 0, 4], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0, 0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([1, 0, 0, 0], dtype=np.int64),
+        "bull_final_excess": np.array([-0.01, 0.02, -0.01, np.nan], dtype=np.float32),
+        "bear_final_excess": np.array([-0.002, np.nan, np.nan, 0.02], dtype=np.float32),
+    }
+    thresholds = {
+        "high_vol_atr": 0.05,
+        "high_vol_hl": 0.05,
+        "true_break_excess": 0.015,
+        "chop_std": 0.05,
+    }
+
+    intact = _structural_state_fields(arrays, 0, min_recent_break_bars=2, thresholds=thresholds)
+    bullish_holding = _structural_state_fields(arrays, 1, min_recent_break_bars=2, thresholds=thresholds)
+    bullish_reverted = _structural_state_fields(arrays, 2, min_recent_break_bars=2, thresholds=thresholds)
+    bearish_holding = _structural_state_fields(arrays, 3, min_recent_break_bars=2, thresholds=thresholds)
+
+    assert intact["confirmed_state"] == "intact"
+    assert intact["pressure_state"] == "down_pressure"
+    assert intact["break_maturity"] == "borderline"
+    assert intact["holding_status"] == "reverted"
+    assert bullish_holding["break_maturity"] == "strong_confirmed"
+    assert bullish_holding["holding_status"] == "holding"
+    assert bullish_reverted["holding_status"] == "reverted"
+    assert bearish_holding["structural_direction"] == "down"
+    assert bearish_holding["holding_status"] == "holding"
+
+
+def test_full_distribution_rows_split_confirmed_break_holding_status():
+    arrays = {
+        "labels": np.array([1, 1], dtype=np.int64),
+        "preds": np.array([1, 1], dtype=np.int64),
+        "probs": np.array([[0.1, 0.8, 0.1], [0.1, 0.8, 0.1]], dtype=np.float32),
+        "symbols": np.array(["BTC", "BTC"]),
+        "recent_atr_mean": np.array([0.01, 0.01], dtype=np.float32),
+        "recent_hl_mean": np.array([0.01, 0.01], dtype=np.float32),
+        "recent_close_std": np.array([0.01, 0.01], dtype=np.float32),
+        "bull_close_count": np.array([3, 3], dtype=np.int64),
+        "bear_close_count": np.array([0, 0], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 0], dtype=np.int64),
+        "bull_final_excess": np.array([0.02, -0.01], dtype=np.float32),
+        "bear_final_excess": np.array([np.nan, np.nan], dtype=np.float32),
+    }
+    thresholds = {
+        "high_vol_atr": 0.05,
+        "high_vol_hl": 0.05,
+        "true_break_excess": 0.015,
+        "chop_std": 0.05,
+    }
+
+    rows = _full_distribution_rows(arrays, min_recent_break_bars=2, thresholds=thresholds)
+
+    assert {row["holding_status"] for row in rows} == {"holding", "reverted"}
+
+
 def test_embedding_bucket_rows_capture_neighbor_quality():
     arrays = {
         "z_short": np.array([[1.0, 0.0], [0.95, 0.05], [0.0, 1.0], [0.05, 0.95]], dtype=np.float32),
@@ -247,3 +357,25 @@ def test_build_pressure_label_frame_includes_join_keys():
 
     assert frame.columns[:5] == ["index", "symbol", "timestamp", "base_label", "base_label_name"]
     assert frame["pressure_label"].to_list() == ["neutral", "non_intact"]
+
+
+def test_build_structural_training_targets_maps_factor_pressure_and_maturity():
+    labels = np.array([0, 0, 0, 1, 2], dtype=np.int64)
+    domain_summary = {
+        "recent_atr_mean": np.array([0.1, 0.1, 0.1, 0.1, 0.1], dtype=np.float32),
+        "recent_hl_mean": np.array([0.1, 0.1, 0.1, 0.1, 0.1], dtype=np.float32),
+        "bull_close_count": np.array([0, 1, 0, 2, 0], dtype=np.int64),
+        "bear_close_count": np.array([0, 0, 1, 0, 2], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0, 1, 0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 0, 1, 0, 0], dtype=np.int64),
+        "bull_final_excess": np.array([-0.01, 0.01, -0.01, 0.02, -0.01], dtype=np.float32),
+        "bear_final_excess": np.array([-0.01, -0.01, 0.01, -0.01, 0.02], dtype=np.float32),
+        "bull_max_excess": np.array([0.0, 0.01, 0.01, 0.02, 0.0], dtype=np.float32),
+        "bear_max_excess": np.array([0.0, 0.0, 0.01, 0.0, 0.02], dtype=np.float32),
+    }
+
+    targets = build_structural_training_targets(labels, domain_summary, min_recent_break_bars=2)
+
+    assert targets["factor_targets"].tolist() == [0, 3, 5, 6, 7]
+    assert targets["pressure_targets"].tolist() == [0, 1, 3, 4, 4]
+    assert targets["maturity_targets"].tolist() == [0, 2, 2, 3, 3]

@@ -143,7 +143,7 @@ Key metrics to track:
 
 Priority buckets:
 
-- `borderline_intact_break`
+- `borderline_intact_break_*`
 - `wick_sweep_up`
 - `wick_sweep_down`
 - `high_vol_intact_wick_sweep`

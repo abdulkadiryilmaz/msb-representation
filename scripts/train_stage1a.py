@@ -10,6 +10,8 @@ from loguru import logger
 from torch.utils.data import DataLoader
 
 from msb_repr.data.normalizer import Normalizer
+from msb_repr.stage1a.analysis import build_domain_summary, build_structural_training_targets
+from msb_repr.stage1a.config import Stage1ADatasetSpec
 from msb_repr.stage1a.dataset import (
     Stage1ADualWindowDataset,
     Stage1ASymbolBalancedBatchSampler,
@@ -35,6 +37,21 @@ def _label_counts(labels) -> dict[str, int]:
     return counts
 
 
+def _attach_structural_targets(
+    dataset: Stage1ADualWindowDataset,
+    spec: Stage1ADatasetSpec,
+) -> None:
+    domain_summary = build_domain_summary(dataset, spec)
+    targets = build_structural_training_targets(
+        labels=dataset.labels,
+        domain_summary=domain_summary,
+        min_recent_break_bars=spec.labels.min_recent_break_bars,
+    )
+    dataset.factor_targets = targets["factor_targets"]
+    dataset.pressure_targets = targets["pressure_targets"]
+    dataset.maturity_targets = targets["maturity_targets"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train the Stage 1A baseline")
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -58,9 +75,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--supcon-positive-mode",
-        choices=["label", "label_diff_symbol", "label_diff_symbol_neutral_same_symbol"],
+        choices=["label", "factor", "label_diff_symbol", "label_diff_symbol_neutral_same_symbol"],
         default="label",
     )
+    parser.add_argument("--pressure-loss-weight", type=float, default=0.0)
+    parser.add_argument("--maturity-loss-weight", type=float, default=0.0)
     parser.add_argument("--supcon-balance-symbols", action="store_true")
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     args = parser.parse_args()
@@ -68,10 +87,20 @@ def main() -> None:
     if args.supcon_embedding_key == "z_long_proj" and long_projection_dim is None:
         long_projection_dim = args.z_long
 
+    spec = Stage1ADatasetSpec.load(args.dataset_root / "spec.json")
     train_dataset = Stage1ADualWindowDataset.from_root(args.dataset_root, split="train")
     val_dataset = Stage1ADualWindowDataset.from_root(args.dataset_root, split="val")
     if len(train_dataset) == 0 or len(val_dataset) == 0:
         raise ValueError("Train/val split is empty. Rebuild dataset with --train-end and --val-end.")
+
+    use_structural_targets = (
+        args.supcon_positive_mode == "factor"
+        or args.pressure_loss_weight > 0.0
+        or args.maturity_loss_weight > 0.0
+    )
+    if use_structural_targets:
+        _attach_structural_targets(train_dataset, spec)
+        _attach_structural_targets(val_dataset, spec)
 
     short_norm = Normalizer().fit(train_dataset.short_windows)
     long_norm = Normalizer().fit(train_dataset.long_windows)
@@ -108,6 +137,8 @@ def main() -> None:
         long_input_channels=long_batch.shape[1],
         z_short=args.z_short,
         z_long=args.z_long,
+        num_pressure_classes=5 if args.pressure_loss_weight > 0.0 else None,
+        num_maturity_classes=4 if args.maturity_loss_weight > 0.0 else None,
         projection_dim=args.projection_dim,
         long_projection_dim=long_projection_dim,
         dropout=args.dropout,
@@ -116,7 +147,9 @@ def main() -> None:
     model = model.to(device)
     logger.info("Stage 1A training device: {}", device)
 
-    if args.use_supcon and args.supcon_embedding_key == "z_long_proj":
+    if args.use_supcon and args.supcon_positive_mode == "factor":
+        default_checkpoint_name = "ce_supcon_long_factor_v1"
+    elif args.use_supcon and args.supcon_embedding_key == "z_long_proj":
         default_checkpoint_name = "ce_supcon_long_v1"
     elif args.use_supcon:
         default_checkpoint_name = "ce_supcon_v1"
@@ -136,6 +169,8 @@ def main() -> None:
             supcon_temperature=args.supcon_temperature,
             supcon_embedding_key=args.supcon_embedding_key,
             supcon_positive_mode=args.supcon_positive_mode,
+            pressure_loss_weight=args.pressure_loss_weight,
+            maturity_loss_weight=args.maturity_loss_weight,
             checkpoint_dir=checkpoint_dir,
         ),
     )
@@ -153,12 +188,16 @@ def main() -> None:
         "z_long": args.z_long,
         "projection_dim": args.projection_dim,
         "long_projection_dim": long_projection_dim,
+        "num_pressure_classes": 5 if args.pressure_loss_weight > 0.0 else None,
+        "num_maturity_classes": 4 if args.maturity_loss_weight > 0.0 else None,
         "device": str(device),
         "use_supcon": args.use_supcon,
         "supcon_weight": args.supcon_weight,
         "supcon_temperature": args.supcon_temperature,
         "supcon_embedding_key": args.supcon_embedding_key,
         "supcon_positive_mode": args.supcon_positive_mode,
+        "pressure_loss_weight": args.pressure_loss_weight,
+        "maturity_loss_weight": args.maturity_loss_weight,
         "supcon_balance_symbols": args.supcon_balance_symbols,
         "train_label_counts": _label_counts(train_dataset.labels),
         "val_label_counts": _label_counts(val_dataset.labels),

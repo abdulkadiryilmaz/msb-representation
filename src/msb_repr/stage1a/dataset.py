@@ -17,6 +17,9 @@ from msb_repr.stage1a.config import Stage1ADatasetSpec
 class Stage1AMeta:
     symbol: str
     timestamp: int
+    factor_target: int | None = None
+    pressure_target: int | None = None
+    maturity_target: int | None = None
 
 
 def _date_to_unix(date_str: str) -> int:
@@ -49,14 +52,27 @@ class Stage1ADualWindowDataset(Dataset):
         labels: np.ndarray,
         timestamps: np.ndarray,
         symbols: list[str],
+        factor_targets: np.ndarray | None = None,
+        pressure_targets: np.ndarray | None = None,
+        maturity_targets: np.ndarray | None = None,
     ) -> None:
         if not (len(short_windows) == len(long_windows) == len(labels) == len(timestamps) == len(symbols)):
             raise ValueError("All Stage 1A dataset arrays must have the same length")
+        for name, values in {
+            "factor_targets": factor_targets,
+            "pressure_targets": pressure_targets,
+            "maturity_targets": maturity_targets,
+        }.items():
+            if values is not None and len(values) != len(labels):
+                raise ValueError(f"{name} must have the same length as labels")
         self.short_windows = short_windows.astype(np.float32)
         self.long_windows = long_windows.astype(np.float32)
         self.labels = labels.astype(np.int64)
         self.timestamps = timestamps.astype(np.int64)
         self.symbols = symbols
+        self.factor_targets = None if factor_targets is None else factor_targets.astype(np.int64)
+        self.pressure_targets = None if pressure_targets is None else pressure_targets.astype(np.int64)
+        self.maturity_targets = None if maturity_targets is None else maturity_targets.astype(np.int64)
 
     @classmethod
     def from_root(
@@ -117,7 +133,13 @@ class Stage1ADualWindowDataset(Dataset):
             torch.from_numpy(self.short_windows[idx]),
             torch.from_numpy(self.long_windows[idx]),
             torch.tensor(self.labels[idx], dtype=torch.long),
-            Stage1AMeta(symbol=self.symbols[idx], timestamp=int(self.timestamps[idx])),
+            Stage1AMeta(
+                symbol=self.symbols[idx],
+                timestamp=int(self.timestamps[idx]),
+                factor_target=None if self.factor_targets is None else int(self.factor_targets[idx]),
+                pressure_target=None if self.pressure_targets is None else int(self.pressure_targets[idx]),
+                maturity_target=None if self.maturity_targets is None else int(self.maturity_targets[idx]),
+            ),
         )
 
 

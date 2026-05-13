@@ -211,6 +211,45 @@ En kritik sınır bucket'ı olan `borderline_intact_break` için:
 - ama `z_fused` tarafında tam bir semantik sıçrama yok
 - misclassified rate de düşmüyor
 
+Coin bazlı classifier hata oranı:
+
+| Symbol | Val count | Val error | CE-only val error | Test count | Test error | CE-only test error |
+|---|---:|---:|---:|---:|---:|---:|
+| BTC | 179 | 23.5% | 20.1% | 202 | 30.2% | 24.3% |
+| ETH | 150 | 23.3% | 24.0% | 178 | 24.7% | 25.3% |
+| SOL | 132 | 31.8% | 32.6% | 168 | 26.8% | 25.0% |
+| XRP | 157 | 29.3% | 26.1% | 183 | 30.6% | 26.8% |
+
+Bu tablo `ce_supcon_long_v1`in bucket-level classifier hatasını sistematik biçimde düşürmediğini gösteriyor. Kazanç daha çok `z_long` / `z_fused` komşuluk geometrisinde ve symbol shortcut temizliğinde kalıyor.
+
+2026-05-12 güncellemesi:
+
+`borderline_intact_break` bucket'ı yön bilgisini kaybettiği için analiz katmanında üç alt bucket'a ayrıldı:
+
+- `borderline_intact_break_up`
+- `borderline_intact_break_down`
+- `borderline_intact_break_mixed`
+
+Bu ayrım sonrası `ce_supcon_long_v1` çıktılarında yönlü hata tablosu:
+
+| Split | Symbol | Up count | Up error | Down count | Down error | Mixed count | Mixed error |
+|---|---|---:|---:|---:|---:|---:|---:|
+| val | BTC | 81 | 18.5% | 94 | 28.7% | 4 | 0.0% |
+| val | ETH | 78 | 26.9% | 65 | 18.5% | 7 | 28.6% |
+| val | SOL | 59 | 32.2% | 70 | 31.4% | 3 | 33.3% |
+| val | XRP | 63 | 25.4% | 89 | 30.3% | 5 | 60.0% |
+| test | BTC | 102 | 27.5% | 96 | 32.3% | 4 | 50.0% |
+| test | ETH | 95 | 21.1% | 76 | 30.3% | 7 | 14.3% |
+| test | SOL | 81 | 24.7% | 83 | 30.1% | 4 | 0.0% |
+| test | XRP | 71 | 25.4% | 107 | 32.7% | 5 | 60.0% |
+
+Bu ayrım, bucket'ın tek parça bir "intact vs break" problemi olmadığını gösteriyor. Hata genellikle direction ile uyumlu:
+
+- `borderline_intact_break_up` örnekleri yanlışlandığında çoğunlukla `bullish`
+- `borderline_intact_break_down` örnekleri yanlışlandığında çoğunlukla `bearish`
+
+Yani model bu örneklerde yönsel baskıyı görüyor, fakat Stage 1A classifier sınırı bu baskıyı bazen "henüz intact" yerine "break başladı" olarak yorumluyor.
+
 Yani bu deney, problemi çözme yönünde daha doğru bir adım olsa da, en zor sınır bucket'ı henüz tamamen açılmış değil.
 
 ## Overall Decision

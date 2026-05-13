@@ -11,6 +11,7 @@ from loguru import logger
 
 from msb_repr.stage1a.analysis import (
     LABEL_NAMES,
+    compute_intact_pressure_labels,
     compute_cosine_neighbors,
     compute_hard_case_scores,
     compute_pca_projection,
@@ -57,6 +58,20 @@ def _has_domain_summary(arrays: dict[str, np.ndarray]) -> bool:
     return required.issubset(arrays.keys())
 
 
+def _has_pressure_summary(arrays: dict[str, np.ndarray]) -> bool:
+    required = {
+        "bull_close_count",
+        "bear_close_count",
+        "bull_wick_count",
+        "bear_wick_count",
+        "bull_final_excess",
+        "bear_final_excess",
+        "bull_max_excess",
+        "bear_max_excess",
+    }
+    return required.issubset(arrays.keys())
+
+
 def _assign_domain_bucket(
     arrays: dict[str, np.ndarray],
     idx: int,
@@ -85,8 +100,23 @@ def _assign_domain_bucket(
             return "high_vol_intact_wick_sweep", "intact label with high volatility and failed wick break attempts"
         if high_vol:
             return "high_vol_intact", "intact label under elevated volatility regime"
-        if bull_close_count == min_recent_break_bars - 1 or bear_close_count == min_recent_break_bars - 1:
-            return "borderline_intact_break", "intact label but close count is one step below break confirmation"
+        bull_near_confirmed = bull_close_count == min_recent_break_bars - 1
+        bear_near_confirmed = bear_close_count == min_recent_break_bars - 1
+        if bull_near_confirmed and bear_near_confirmed:
+            return (
+                "borderline_intact_break_mixed",
+                "intact label with both bullish and bearish close counts one step below break confirmation",
+            )
+        if bull_near_confirmed:
+            return (
+                "borderline_intact_break_up",
+                "intact label with bullish close count one step below break confirmation",
+            )
+        if bear_near_confirmed:
+            return (
+                "borderline_intact_break_down",
+                "intact label with bearish close count one step below break confirmation",
+            )
         if bull_wick_count > 0:
             return "wick_sweep_up", "upside wick exceeded structure level without close confirmation"
         if bear_wick_count > 0:
@@ -116,6 +146,124 @@ def _assign_domain_bucket(
         return "borderline_bearish_break", "bearish label with weak displacement beyond break level"
 
     return "unclassified", "bucket rules did not match the sample"
+
+
+def _structural_direction(
+    bull_active: bool,
+    bear_active: bool,
+) -> str:
+    if bull_active and bear_active:
+        return "mixed"
+    if bull_active:
+        return "up"
+    if bear_active:
+        return "down"
+    return "none"
+
+
+def _directional_holding_status(direction: str, bull_final_excess: float, bear_final_excess: float) -> str:
+    if direction == "up":
+        if not np.isfinite(bull_final_excess):
+            return "unknown"
+        return "holding" if bull_final_excess > 0.0 else "reverted"
+    if direction == "down":
+        if not np.isfinite(bear_final_excess):
+            return "unknown"
+        return "holding" if bear_final_excess > 0.0 else "reverted"
+    if direction == "mixed":
+        return "mixed"
+    return "none"
+
+
+def _structural_state_fields(
+    arrays: dict[str, np.ndarray],
+    idx: int,
+    min_recent_break_bars: int,
+    thresholds: dict[str, float],
+    pressure_labels: np.ndarray | None = None,
+) -> dict[str, str]:
+    if not _has_domain_summary(arrays):
+        return {
+            "confirmed_state": LABEL_NAMES[int(arrays["labels"][idx])],
+            "confirmed_direction": "unknown",
+            "pressure_state": "unknown",
+            "break_maturity": "unknown",
+            "structural_direction": "unknown",
+            "holding_status": "unknown",
+        }
+
+    label = int(arrays["labels"][idx])
+    bucket, _ = _assign_domain_bucket(arrays, idx, min_recent_break_bars, thresholds)
+    bull_close_count = int(arrays["bull_close_count"][idx])
+    bear_close_count = int(arrays["bear_close_count"][idx])
+    bull_wick_count = int(arrays["bull_wick_count"][idx])
+    bear_wick_count = int(arrays["bear_wick_count"][idx])
+    bull_final_excess = float(arrays["bull_final_excess"][idx]) if np.isfinite(arrays["bull_final_excess"][idx]) else np.nan
+    bear_final_excess = float(arrays["bear_final_excess"][idx]) if np.isfinite(arrays["bear_final_excess"][idx]) else np.nan
+
+    confirmed_direction = {0: "none", 1: "up", 2: "down"}.get(label, "unknown")
+    if pressure_labels is not None:
+        pressure_state = str(pressure_labels[idx])
+    elif label == 0:
+        bull_pressure = bull_close_count > 0 or bull_wick_count > 0
+        bear_pressure = bear_close_count > 0 or bear_wick_count > 0
+        direction = _structural_direction(bull_pressure, bear_pressure)
+        pressure_state = {
+            "up": "up_pressure",
+            "down": "down_pressure",
+            "mixed": "mixed_pressure",
+            "none": "neutral",
+        }[direction]
+    else:
+        pressure_state = "non_intact"
+
+    if label == 0:
+        bull_near_confirmed = bull_close_count == min_recent_break_bars - 1
+        bear_near_confirmed = bear_close_count == min_recent_break_bars - 1
+        bull_active = bull_near_confirmed or bull_wick_count > 0
+        bear_active = bear_near_confirmed or bear_wick_count > 0
+        structural_direction = _structural_direction(bull_active, bear_active)
+
+        if bucket.startswith("high_vol_intact"):
+            break_maturity = bucket
+        elif bull_near_confirmed or bear_near_confirmed:
+            break_maturity = "borderline"
+        elif bull_wick_count > 0 or bear_wick_count > 0:
+            break_maturity = "wick_sweep"
+        else:
+            break_maturity = "clean"
+        holding_status = _directional_holding_status(structural_direction, bull_final_excess, bear_final_excess)
+    elif label == 1:
+        structural_direction = "up"
+        if bull_close_count >= min_recent_break_bars and bull_final_excess >= thresholds["true_break_excess"]:
+            break_maturity = "strong_confirmed"
+        elif bull_close_count >= min_recent_break_bars:
+            break_maturity = "confirmed"
+        else:
+            break_maturity = "weak_or_choppy_confirmed"
+        holding_status = _directional_holding_status("up", bull_final_excess, bear_final_excess)
+    elif label == 2:
+        structural_direction = "down"
+        if bear_close_count >= min_recent_break_bars and bear_final_excess >= thresholds["true_break_excess"]:
+            break_maturity = "strong_confirmed"
+        elif bear_close_count >= min_recent_break_bars:
+            break_maturity = "confirmed"
+        else:
+            break_maturity = "weak_or_choppy_confirmed"
+        holding_status = _directional_holding_status("down", bull_final_excess, bear_final_excess)
+    else:
+        structural_direction = "unknown"
+        break_maturity = "unknown"
+        holding_status = "unknown"
+
+    return {
+        "confirmed_state": LABEL_NAMES[label],
+        "confirmed_direction": confirmed_direction,
+        "pressure_state": pressure_state,
+        "break_maturity": break_maturity,
+        "structural_direction": structural_direction,
+        "holding_status": holding_status,
+    }
 
 
 def _projection_rows(arrays: dict[str, np.ndarray], coords: np.ndarray, source: str) -> list[dict[str, object]]:
@@ -174,6 +322,7 @@ def _hard_case_rows(
     limit: int,
     min_recent_break_bars: int,
     thresholds: dict[str, float],
+    pressure_labels: np.ndarray | None = None,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     order = np.argsort(-scores)[:limit]
@@ -181,12 +330,20 @@ def _hard_case_rows(
         top_neighbors = neighbor_indices[idx, : min(3, neighbor_indices.shape[1])]
         top_scores = neighbor_scores[idx, : min(3, neighbor_scores.shape[1])]
         bucket, bucket_reason = _assign_domain_bucket(arrays, int(idx), min_recent_break_bars, thresholds)
+        state_fields = _structural_state_fields(
+            arrays,
+            int(idx),
+            min_recent_break_bars,
+            thresholds,
+            pressure_labels=pressure_labels,
+        )
         rows.append(
             {
                 "index": int(idx),
                 "hard_score": float(scores[idx]),
                 "bucket": bucket,
                 "bucket_reason": bucket_reason,
+                **state_fields,
                 "symbol": str(arrays["symbols"][idx]),
                 "timestamp": int(arrays["timestamps"][idx]),
                 "label": int(arrays["labels"][idx]),
@@ -266,18 +423,47 @@ def _full_distribution_rows(
     arrays: dict[str, np.ndarray],
     min_recent_break_bars: int,
     thresholds: dict[str, float],
+    pressure_labels: np.ndarray | None = None,
 ) -> list[dict[str, object]]:
-    grouped: dict[tuple[str, str], list[int]] = {}
+    grouped: dict[tuple[str, str, str, str, str, str, str, str, str], list[int]] = {}
     symbol_totals: dict[str, int] = {}
 
     for idx in range(len(arrays["labels"])):
         symbol = str(arrays["symbols"][idx])
         bucket, bucket_reason = _assign_domain_bucket(arrays, idx, min_recent_break_bars, thresholds)
-        grouped.setdefault((symbol, bucket, bucket_reason), []).append(idx)
+        state_fields = _structural_state_fields(
+            arrays,
+            idx,
+            min_recent_break_bars,
+            thresholds,
+            pressure_labels=pressure_labels,
+        )
+        key = (
+            symbol,
+            bucket,
+            bucket_reason,
+            state_fields["confirmed_state"],
+            state_fields["confirmed_direction"],
+            state_fields["pressure_state"],
+            state_fields["break_maturity"],
+            state_fields["structural_direction"],
+            state_fields["holding_status"],
+        )
+        grouped.setdefault(key, []).append(idx)
         symbol_totals[symbol] = symbol_totals.get(symbol, 0) + 1
 
     rows: list[dict[str, object]] = []
-    for (symbol, bucket, bucket_reason), indices in sorted(grouped.items()):
+    for (
+        symbol,
+        bucket,
+        bucket_reason,
+        confirmed_state,
+        confirmed_direction,
+        pressure_state,
+        break_maturity,
+        structural_direction,
+        holding_status,
+    ), indices in sorted(grouped.items()):
         idx_arr = np.array(indices, dtype=np.int64)
         labels = arrays["labels"][idx_arr]
         preds = arrays["preds"][idx_arr]
@@ -289,6 +475,12 @@ def _full_distribution_rows(
             {
                 "symbol": symbol,
                 "bucket": bucket,
+                "confirmed_state": confirmed_state,
+                "confirmed_direction": confirmed_direction,
+                "pressure_state": pressure_state,
+                "break_maturity": break_maturity,
+                "structural_direction": structural_direction,
+                "holding_status": holding_status,
                 "count": count,
                 "share_within_symbol": count / symbol_totals[symbol],
                 "misclassified_count": misclassified,
@@ -323,8 +515,14 @@ def main() -> None:
     has_domain_summary = _has_domain_summary(arrays)
     if has_domain_summary:
         bucket_thresholds = _build_bucket_thresholds(arrays)
+        pressure_labels = (
+            compute_intact_pressure_labels(arrays, label_config=label_config)["pressure_label"]
+            if _has_pressure_summary(arrays)
+            else None
+        )
     else:
         bucket_thresholds = {}
+        pressure_labels = None
         logger.warning("Domain summary arrays missing in latent export. Re-run export to enable domain buckets.")
 
     pca_coords, pca_info = compute_pca_projection(embeddings)
@@ -393,6 +591,7 @@ def main() -> None:
         limit=args.hard_case_limit,
         min_recent_break_bars=min_recent_break_bars,
         thresholds=bucket_thresholds,
+        pressure_labels=pressure_labels,
     )
     hard_fields = list(hard_rows[0].keys()) if hard_rows else []
     if hard_fields:
@@ -406,7 +605,12 @@ def main() -> None:
     else:
         symbol_bucket_rows = []
 
-    full_distribution_rows = _full_distribution_rows(arrays, min_recent_break_bars, bucket_thresholds)
+    full_distribution_rows = _full_distribution_rows(
+        arrays,
+        min_recent_break_bars,
+        bucket_thresholds,
+        pressure_labels=pressure_labels,
+    )
     write_rows_csv(
         output_dir / "symbol_bucket_full_distribution.csv",
         list(full_distribution_rows[0].keys()) if full_distribution_rows else [],

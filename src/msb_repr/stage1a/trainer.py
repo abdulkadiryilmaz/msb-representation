@@ -27,6 +27,8 @@ class Stage1ATrainerConfig:
     supcon_temperature: float = 0.1
     supcon_embedding_key: str = "z_proj"
     supcon_positive_mode: str = "label"
+    pressure_loss_weight: float = 0.0
+    maturity_loss_weight: float = 0.0
     checkpoint_dir: Path = Path("data/checkpoints/stage1a")
 
 
@@ -56,6 +58,7 @@ class Stage1ATrainer:
             weight_decay=cfg.weight_decay,
         )
         self.criterion = nn.CrossEntropyLoss()
+        self.aux_criterion = nn.CrossEntropyLoss()
         self.supcon_criterion = SupConLoss(cfg.supcon_temperature) if cfg.use_supcon else None
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader) -> dict[str, list[float]]:
@@ -65,23 +68,59 @@ class Stage1ATrainer:
             "train_loss": [],
             "train_ce_loss": [],
             "train_supcon_loss": [],
+            "train_pressure_loss": [],
+            "train_maturity_loss": [],
+            "train_supcon_anchor_rate": [],
+            "train_supcon_avg_positive_count": [],
             "val_loss": [],
             "val_ce_loss": [],
             "val_supcon_loss": [],
+            "val_pressure_loss": [],
+            "val_maturity_loss": [],
+            "val_supcon_anchor_rate": [],
+            "val_supcon_avg_positive_count": [],
             "val_macro_f1": [],
         }
         self.cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         for epoch in range(1, self.cfg.epochs + 1):
-            train_loss, train_ce_loss, train_supcon_loss, _, _ = self._run_epoch(train_loader, train=True)
-            val_loss, val_ce_loss, val_supcon_loss, val_macro_f1, val_metrics = self._run_epoch(val_loader, train=False)
+            (
+                train_loss,
+                train_ce_loss,
+                train_supcon_loss,
+                train_pressure_loss,
+                train_maturity_loss,
+                train_anchor_rate,
+                train_avg_pos,
+                _,
+                _,
+            ) = self._run_epoch(train_loader, train=True)
+            (
+                val_loss,
+                val_ce_loss,
+                val_supcon_loss,
+                val_pressure_loss,
+                val_maturity_loss,
+                val_anchor_rate,
+                val_avg_pos,
+                val_macro_f1,
+                val_metrics,
+            ) = self._run_epoch(val_loader, train=False)
 
             history["train_loss"].append(train_loss)
             history["train_ce_loss"].append(train_ce_loss)
             history["train_supcon_loss"].append(train_supcon_loss)
+            history["train_pressure_loss"].append(train_pressure_loss)
+            history["train_maturity_loss"].append(train_maturity_loss)
+            history["train_supcon_anchor_rate"].append(train_anchor_rate)
+            history["train_supcon_avg_positive_count"].append(train_avg_pos)
             history["val_loss"].append(val_loss)
             history["val_ce_loss"].append(val_ce_loss)
             history["val_supcon_loss"].append(val_supcon_loss)
+            history["val_pressure_loss"].append(val_pressure_loss)
+            history["val_maturity_loss"].append(val_maturity_loss)
+            history["val_supcon_anchor_rate"].append(val_anchor_rate)
+            history["val_supcon_avg_positive_count"].append(val_avg_pos)
             history["val_macro_f1"].append(val_macro_f1)
 
             logger.info(
@@ -94,11 +133,19 @@ class Stage1ATrainer:
             )
             if self.cfg.use_supcon:
                 logger.debug(
-                    "Aux losses | train_ce={:.5f} train_supcon={:.5f} val_ce={:.5f} val_supcon={:.5f}",
+                    "Aux losses | train_ce={:.5f} train_supcon={:.5f} train_pressure={:.5f} train_maturity={:.5f} "
+                    "val_ce={:.5f} val_supcon={:.5f} val_pressure={:.5f} val_maturity={:.5f} "
+                    "train_anchor_rate={:.4f} val_anchor_rate={:.4f}",
                     train_ce_loss,
                     train_supcon_loss,
+                    train_pressure_loss,
+                    train_maturity_loss,
                     val_ce_loss,
                     val_supcon_loss,
+                    val_pressure_loss,
+                    val_maturity_loss,
+                    train_anchor_rate,
+                    val_anchor_rate,
                 )
             logger.debug("Val metrics: {}", val_metrics)
 
@@ -116,11 +163,20 @@ class Stage1ATrainer:
         self._save_history(history)
         return history
 
-    def _run_epoch(self, loader: DataLoader, train: bool) -> tuple[float, float, float, float, dict[str, float]]:
+    def _run_epoch(
+        self,
+        loader: DataLoader,
+        train: bool,
+    ) -> tuple[float, float, float, float, float, float, float, float, dict[str, float]]:
         self.model.train(train)
         total_loss = 0.0
         total_ce_loss = 0.0
         total_supcon_loss = 0.0
+        total_pressure_loss = 0.0
+        total_maturity_loss = 0.0
+        total_supcon_valid_anchors = 0.0
+        total_supcon_positive_counts = 0.0
+        total_supcon_anchors = 0.0
         preds = []
         labels = []
 
@@ -132,13 +188,26 @@ class Stage1ATrainer:
                 outputs = self.model(short_x, long_x)
                 ce_loss = self.criterion(outputs["logits"], y)
                 supcon_loss = ce_loss.new_zeros(())
+                pressure_loss = ce_loss.new_zeros(())
+                maturity_loss = ce_loss.new_zeros(())
                 if self.supcon_criterion is not None:
                     if self.cfg.supcon_embedding_key not in outputs:
                         raise KeyError(
                             f"SupCon embedding key not produced by model: {self.cfg.supcon_embedding_key}"
                         )
                     symbol_ids = None
-                    if self.cfg.supcon_positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
+                    supcon_labels = y
+                    supcon_positive_mode = self.cfg.supcon_positive_mode
+                    if self.cfg.supcon_positive_mode == "factor":
+                        if any(meta.factor_target is None for meta in metas):
+                            raise ValueError("factor_target metadata is required for supcon_positive_mode='factor'")
+                        supcon_labels = torch.tensor(
+                            [int(meta.factor_target) for meta in metas],
+                            dtype=torch.long,
+                            device=self.device,
+                        )
+                        supcon_positive_mode = "label"
+                    if supcon_positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
                         symbol_to_id = {symbol: idx for idx, symbol in enumerate(dict.fromkeys(meta.symbol for meta in metas))}
                         symbol_ids = torch.tensor(
                             [symbol_to_id[meta.symbol] for meta in metas],
@@ -147,11 +216,46 @@ class Stage1ATrainer:
                         )
                     supcon_loss = self.supcon_criterion(
                         outputs[self.cfg.supcon_embedding_key],
-                        y,
+                        supcon_labels,
                         symbol_ids=symbol_ids,
-                        positive_mode=self.cfg.supcon_positive_mode,
+                        positive_mode=supcon_positive_mode,
                     )
-                loss = ce_loss + self.cfg.supcon_weight * supcon_loss
+                    positive_counts = self._supcon_positive_counts(
+                        supcon_labels,
+                        symbol_ids=symbol_ids,
+                        positive_mode=supcon_positive_mode,
+                    )
+                    total_supcon_valid_anchors += float((positive_counts > 0).sum().item())
+                    total_supcon_positive_counts += float(positive_counts.sum().item())
+                    total_supcon_anchors += float(len(positive_counts))
+                if self.cfg.pressure_loss_weight > 0.0:
+                    if "pressure_logits" not in outputs:
+                        raise KeyError("pressure_logits not produced by model")
+                    if any(meta.pressure_target is None for meta in metas):
+                        raise ValueError("pressure_target metadata is required when pressure_loss_weight > 0")
+                    pressure_targets = torch.tensor(
+                        [int(meta.pressure_target) for meta in metas],
+                        dtype=torch.long,
+                        device=self.device,
+                    )
+                    pressure_loss = self.aux_criterion(outputs["pressure_logits"], pressure_targets)
+                if self.cfg.maturity_loss_weight > 0.0:
+                    if "maturity_logits" not in outputs:
+                        raise KeyError("maturity_logits not produced by model")
+                    if any(meta.maturity_target is None for meta in metas):
+                        raise ValueError("maturity_target metadata is required when maturity_loss_weight > 0")
+                    maturity_targets = torch.tensor(
+                        [int(meta.maturity_target) for meta in metas],
+                        dtype=torch.long,
+                        device=self.device,
+                    )
+                    maturity_loss = self.aux_criterion(outputs["maturity_logits"], maturity_targets)
+                loss = (
+                    ce_loss
+                    + self.cfg.supcon_weight * supcon_loss
+                    + self.cfg.pressure_loss_weight * pressure_loss
+                    + self.cfg.maturity_loss_weight * maturity_loss
+                )
 
                 if train:
                     self.optimizer.zero_grad()
@@ -161,6 +265,8 @@ class Stage1ATrainer:
                 total_loss += loss.item() * short_x.size(0)
                 total_ce_loss += ce_loss.item() * short_x.size(0)
                 total_supcon_loss += supcon_loss.item() * short_x.size(0)
+                total_pressure_loss += pressure_loss.item() * short_x.size(0)
+                total_maturity_loss += maturity_loss.item() * short_x.size(0)
                 preds.append(outputs["logits"].argmax(dim=1).detach().cpu().numpy())
                 labels.append(y.detach().cpu().numpy())
 
@@ -172,9 +278,33 @@ class Stage1ATrainer:
             total_loss / dataset_len,
             total_ce_loss / dataset_len,
             total_supcon_loss / dataset_len,
+            total_pressure_loss / dataset_len,
+            total_maturity_loss / dataset_len,
+            total_supcon_valid_anchors / total_supcon_anchors if total_supcon_anchors else 0.0,
+            total_supcon_positive_counts / total_supcon_anchors if total_supcon_anchors else 0.0,
             macro_f1,
             per_class,
         )
+
+    def _supcon_positive_counts(
+        self,
+        labels: torch.Tensor,
+        symbol_ids: torch.Tensor | None,
+        positive_mode: str,
+    ) -> torch.Tensor:
+        labels = labels.view(-1, 1)
+        positive_mask = torch.eq(labels, labels.T)
+        logits_mask = ~torch.eye(labels.shape[0], device=labels.device, dtype=torch.bool)
+        if positive_mode in {"label_diff_symbol", "label_diff_symbol_neutral_same_symbol"}:
+            if symbol_ids is None:
+                raise ValueError("symbol_ids required for symbol-aware positive counts")
+            symbol_ids = symbol_ids.view(-1, 1)
+            same_symbol_mask = torch.eq(symbol_ids, symbol_ids.T)
+            positive_mask = positive_mask & (~same_symbol_mask)
+            if positive_mode == "label_diff_symbol_neutral_same_symbol":
+                neutral_mask = torch.eq(labels, labels.T) & same_symbol_mask
+                logits_mask = logits_mask & (~neutral_mask)
+        return (positive_mask & logits_mask).sum(dim=1).to(torch.float32)
 
     def _save_checkpoint(self, name: str) -> None:
         path = self.cfg.checkpoint_dir / name
