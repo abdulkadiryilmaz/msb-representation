@@ -153,20 +153,28 @@ def collate_fn_stage1a(
 class Stage1ASymbolBalancedBatchSampler(Sampler[list[int]]):
     """Round-robin batch sampler that keeps symbol coverage mixed within a batch."""
 
-    def __init__(self, symbols: list[str], batch_size: int, shuffle: bool = True, drop_last: bool = False) -> None:
+    def __init__(
+        self,
+        symbols: list[str],
+        batch_size: int,
+        shuffle: bool = True,
+        drop_last: bool = False,
+        seed: int | None = None,
+    ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
         self.symbols = symbols
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.drop_last = drop_last
+        self.seed = seed
         self._symbol_values = list(dict.fromkeys(symbols))
         self._indices_by_symbol: dict[str, list[int]] = {symbol: [] for symbol in self._symbol_values}
         for idx, symbol in enumerate(symbols):
             self._indices_by_symbol[symbol].append(idx)
 
     def __iter__(self):
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(self.seed)
         pools = {symbol: indices.copy() for symbol, indices in self._indices_by_symbol.items()}
         symbol_order = self._symbol_values.copy()
         if self.shuffle:

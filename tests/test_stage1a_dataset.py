@@ -96,6 +96,7 @@ def test_stage1a_model_forward_shapes_with_auxiliary_heads():
         long_input_channels=10,
         num_pressure_classes=5,
         num_maturity_classes=4,
+        num_long_aux_classes=3,
     )
     short_x = np.ones((4, 10, 48), dtype=np.float32)
     long_x = np.ones((4, 10, 288), dtype=np.float32)
@@ -107,6 +108,26 @@ def test_stage1a_model_forward_shapes_with_auxiliary_heads():
 
     assert tuple(outputs["pressure_logits"].shape) == (4, 5)
     assert tuple(outputs["maturity_logits"].shape) == (4, 4)
+    assert tuple(outputs["long_aux_logits"].shape) == (4, 3)
+
+
+def test_stage1a_model_pressure_head_can_use_short_latent():
+    model = Stage1AModel(
+        short_input_channels=10,
+        long_input_channels=10,
+        num_pressure_classes=5,
+        pressure_head_input="z_short",
+    )
+    short_x = np.ones((4, 10, 48), dtype=np.float32)
+    long_x = np.ones((4, 10, 288), dtype=np.float32)
+
+    outputs = model(
+        model.short_encoder.stem[0].weight.new_tensor(short_x),
+        model.long_encoder.stem[0].weight.new_tensor(long_x),
+    )
+
+    assert model.pressure_head_input == "z_short"
+    assert tuple(outputs["pressure_logits"].shape) == (4, 5)
 
 
 def test_symbol_balanced_batch_sampler_mixes_symbols():
@@ -119,3 +140,11 @@ def test_symbol_balanced_batch_sampler_mixes_symbols():
     for batch in batches:
         batch_symbols = {symbols[idx] for idx in batch}
         assert len(batch_symbols) == 3
+
+
+def test_symbol_balanced_batch_sampler_seed_is_reproducible():
+    symbols = ["BTC", "BTC", "ETH", "ETH", "SOL", "SOL"]
+    first = Stage1ASymbolBalancedBatchSampler(symbols=symbols, batch_size=3, seed=7)
+    second = Stage1ASymbolBalancedBatchSampler(symbols=symbols, batch_size=3, seed=7)
+
+    assert list(iter(first)) == list(iter(second))

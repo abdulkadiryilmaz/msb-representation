@@ -86,12 +86,17 @@ class Stage1AModel(nn.Module):
         num_classes: int = 3,
         num_pressure_classes: int | None = None,
         num_maturity_classes: int | None = None,
+        num_long_aux_classes: int | None = None,
+        pressure_head_input: str = "z_fused",
         projection_dim: int = 64,
         long_projection_dim: int | None = None,
         hidden_channels: int = 64,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
+        if pressure_head_input not in {"z_fused", "z_short"}:
+            raise ValueError(f"Unsupported pressure_head_input: {pressure_head_input}")
+        self.pressure_head_input = pressure_head_input
         self.short_encoder = TemporalConvEncoder(
             input_channels=short_input_channels,
             latent_dim=z_short,
@@ -105,6 +110,7 @@ class Stage1AModel(nn.Module):
             dropout=dropout,
         )
         fused_dim = z_short + z_long
+        pressure_dim = z_short if pressure_head_input == "z_short" else fused_dim
         self.classifier = nn.Sequential(
             nn.Linear(fused_dim, fused_dim),
             nn.LayerNorm(fused_dim),
@@ -114,11 +120,11 @@ class Stage1AModel(nn.Module):
         )
         self.pressure_classifier = (
             nn.Sequential(
-                nn.Linear(fused_dim, fused_dim),
-                nn.LayerNorm(fused_dim),
+                nn.Linear(pressure_dim, pressure_dim),
+                nn.LayerNorm(pressure_dim),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                nn.Linear(fused_dim, num_pressure_classes),
+                nn.Linear(pressure_dim, num_pressure_classes),
             )
             if num_pressure_classes is not None
             else None
@@ -132,6 +138,17 @@ class Stage1AModel(nn.Module):
                 nn.Linear(fused_dim, num_maturity_classes),
             )
             if num_maturity_classes is not None
+            else None
+        )
+        self.long_aux_classifier = (
+            nn.Sequential(
+                nn.Linear(z_long, z_long),
+                nn.LayerNorm(z_long),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(z_long, num_long_aux_classes),
+            )
+            if num_long_aux_classes is not None
             else None
         )
         self.projection_head = ProjectionHead(fused_dim, projection_dim=projection_dim, dropout=dropout)
@@ -157,9 +174,12 @@ class Stage1AModel(nn.Module):
         if self.long_projection_head is not None:
             outputs["z_long_proj"] = self.long_projection_head(z_long)
         if self.pressure_classifier is not None:
-            outputs["pressure_logits"] = self.pressure_classifier(z_fused)
+            pressure_input = z_short if self.pressure_head_input == "z_short" else z_fused
+            outputs["pressure_logits"] = self.pressure_classifier(pressure_input)
         if self.maturity_classifier is not None:
             outputs["maturity_logits"] = self.maturity_classifier(z_fused)
+        if self.long_aux_classifier is not None:
+            outputs["long_aux_logits"] = self.long_aux_classifier(z_long)
         return outputs
 
 

@@ -26,6 +26,12 @@ from scripts.analyze_stage1a_latents import (
     _structural_state_fields,
 )
 from scripts.compare_stage1a_embedding_views import _embedding_bucket_rows
+from scripts.diagnose_stage1a_branch_usage import branch_usage_summary
+from scripts.diagnose_stage1a_bucket_geometry import (
+    bucket_centroids,
+    bucket_distance_rows,
+    structural_bucket_labels,
+)
 
 
 def test_load_checkpoint_bundle_and_export_latents(tmp_path):
@@ -39,6 +45,7 @@ def test_load_checkpoint_bundle_and_export_latents(tmp_path):
         "z_long": 5,
         "projection_dim": 6,
         "long_projection_dim": 3,
+        "pressure_head_input": "z_fused",
     }
     (checkpoint_dir / "metadata.json").write_text(json.dumps(metadata))
 
@@ -100,6 +107,73 @@ def test_compute_cosine_neighbors_returns_expected_order():
     assert indices[0, 0] == 1
     assert indices[2, 0] == 1
     assert scores[0, 0] > scores[0, 1]
+
+
+def test_branch_usage_summary_reports_effective_long_short_ratio():
+    model = Stage1AModel(short_input_channels=2, long_input_channels=2, z_short=2, z_long=2)
+    with torch.no_grad():
+        first_linear = model.classifier[0]
+        first_linear.weight[:, :2] = 1.0
+        first_linear.weight[:, 2:] = 2.0
+
+    arrays = {
+        "z_short": np.array([[3.0, 4.0], [0.0, 5.0]], dtype=np.float32),
+        "z_long": np.array([[0.0, 10.0], [6.0, 8.0]], dtype=np.float32),
+        "z_long_proj": np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        "z_fused": np.array([[3.0, 4.0, 0.0, 10.0], [0.0, 5.0, 6.0, 8.0]], dtype=np.float32),
+        "labels": np.array([0, 1], dtype=np.int64),
+        "symbols": np.array(["BTC", "ETH"]),
+    }
+
+    summary = branch_usage_summary(arrays, model, history={"train_supcon_loss": [4.0, 3.0]})
+
+    assert summary["z_long_short_norm_ratio"] == 2.0
+    assert summary["classifier_long_short_weight_ratio"] == 2.0
+    assert summary["effective_long_short_ratio"] == 4.0
+    assert summary["train_supcon_first"] == 4.0
+    assert summary["train_supcon_last"] == 3.0
+
+
+def test_bucket_geometry_diagnostics_build_focus_distances():
+    arrays = {
+        "z_long": np.array(
+            [
+                [1.0, 0.0],
+                [0.9, 0.1],
+                [0.0, 1.0],
+                [0.1, 0.9],
+            ],
+            dtype=np.float32,
+        ),
+        "labels": np.array([0, 0, 1, 1], dtype=np.int64),
+        "bull_close_count": np.array([0, 1, 2, 2], dtype=np.int64),
+        "bear_close_count": np.array([0, 0, 0, 0], dtype=np.int64),
+        "bull_wick_count": np.array([0, 0, 0, 0], dtype=np.int64),
+        "bear_wick_count": np.array([0, 0, 0, 0], dtype=np.int64),
+        "recent_atr_mean": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        "recent_hl_mean": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        "recent_close_std": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        "bull_final_excess": np.array([np.nan, -0.01, 0.02, 0.03], dtype=np.float32),
+        "bear_final_excess": np.array([np.nan, np.nan, np.nan, np.nan], dtype=np.float32),
+    }
+
+    labels = structural_bucket_labels(arrays, min_recent_break_bars=2)
+    centroids = bucket_centroids(arrays["z_long"], labels, min_count=1)
+    rows = bucket_distance_rows(
+        arrays,
+        labels,
+        embedding_keys=["z_long"],
+        pair_groups=[
+            {"group": "clean_vs_borderline", "left": "clean_intact", "right": "borderline_up"},
+            {"group": "borderline_vs_confirmed", "left": "borderline_up", "right": "bullish_confirmed"},
+        ],
+        min_count=1,
+    )
+
+    assert set(labels.tolist()) == {"clean_intact", "borderline_up", "bullish_confirmed"}
+    assert {"clean_intact", "borderline_up", "bullish_confirmed"}.issubset(centroids.keys())
+    assert len(rows) == 2
+    assert rows[0]["cosine_distance"] >= 0.0
 
 
 def test_compute_hard_case_scores_prioritizes_errors():

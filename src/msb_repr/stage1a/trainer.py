@@ -23,12 +23,19 @@ class Stage1ATrainerConfig:
     weight_decay: float = 1e-5
     patience: int = 10
     use_supcon: bool = False
+    ce_warmup_weight: float | None = None
+    ce_warmup_epochs: int = 0
     supcon_weight: float = 0.05
+    supcon_frontload_weight: float | None = None
+    supcon_frontload_epochs: int = 0
     supcon_temperature: float = 0.1
     supcon_embedding_key: str = "z_proj"
     supcon_positive_mode: str = "label"
     pressure_loss_weight: float = 0.0
     maturity_loss_weight: float = 0.0
+    long_aux_loss_weight: float = 0.0
+    seed: int | None = None
+    epoch_checkpoints: tuple[int, ...] = ()
     checkpoint_dir: Path = Path("data/checkpoints/stage1a")
 
 
@@ -67,16 +74,22 @@ class Stage1ATrainer:
         history: dict[str, list[float]] = {
             "train_loss": [],
             "train_ce_loss": [],
+            "train_ce_weight": [],
             "train_supcon_loss": [],
+            "train_supcon_weight": [],
             "train_pressure_loss": [],
             "train_maturity_loss": [],
+            "train_long_aux_loss": [],
             "train_supcon_anchor_rate": [],
             "train_supcon_avg_positive_count": [],
             "val_loss": [],
             "val_ce_loss": [],
+            "val_ce_weight": [],
             "val_supcon_loss": [],
+            "val_supcon_weight": [],
             "val_pressure_loss": [],
             "val_maturity_loss": [],
+            "val_long_aux_loss": [],
             "val_supcon_anchor_rate": [],
             "val_supcon_avg_positive_count": [],
             "val_macro_f1": [],
@@ -84,41 +97,51 @@ class Stage1ATrainer:
         self.cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         for epoch in range(1, self.cfg.epochs + 1):
+            ce_weight = self._ce_weight_for_epoch(epoch)
+            supcon_weight = self._supcon_weight_for_epoch(epoch)
             (
                 train_loss,
                 train_ce_loss,
                 train_supcon_loss,
                 train_pressure_loss,
                 train_maturity_loss,
+                train_long_aux_loss,
                 train_anchor_rate,
                 train_avg_pos,
                 _,
                 _,
-            ) = self._run_epoch(train_loader, train=True)
+            ) = self._run_epoch(train_loader, train=True, ce_weight=ce_weight, supcon_weight=supcon_weight)
             (
                 val_loss,
                 val_ce_loss,
                 val_supcon_loss,
                 val_pressure_loss,
                 val_maturity_loss,
+                val_long_aux_loss,
                 val_anchor_rate,
                 val_avg_pos,
                 val_macro_f1,
                 val_metrics,
-            ) = self._run_epoch(val_loader, train=False)
+            ) = self._run_epoch(val_loader, train=False, ce_weight=ce_weight, supcon_weight=supcon_weight)
 
             history["train_loss"].append(train_loss)
             history["train_ce_loss"].append(train_ce_loss)
+            history["train_ce_weight"].append(ce_weight)
             history["train_supcon_loss"].append(train_supcon_loss)
+            history["train_supcon_weight"].append(supcon_weight)
             history["train_pressure_loss"].append(train_pressure_loss)
             history["train_maturity_loss"].append(train_maturity_loss)
+            history["train_long_aux_loss"].append(train_long_aux_loss)
             history["train_supcon_anchor_rate"].append(train_anchor_rate)
             history["train_supcon_avg_positive_count"].append(train_avg_pos)
             history["val_loss"].append(val_loss)
             history["val_ce_loss"].append(val_ce_loss)
+            history["val_ce_weight"].append(ce_weight)
             history["val_supcon_loss"].append(val_supcon_loss)
+            history["val_supcon_weight"].append(supcon_weight)
             history["val_pressure_loss"].append(val_pressure_loss)
             history["val_maturity_loss"].append(val_maturity_loss)
+            history["val_long_aux_loss"].append(val_long_aux_loss)
             history["val_supcon_anchor_rate"].append(val_anchor_rate)
             history["val_supcon_avg_positive_count"].append(val_avg_pos)
             history["val_macro_f1"].append(val_macro_f1)
@@ -133,21 +156,30 @@ class Stage1ATrainer:
             )
             if self.cfg.use_supcon:
                 logger.debug(
-                    "Aux losses | train_ce={:.5f} train_supcon={:.5f} train_pressure={:.5f} train_maturity={:.5f} "
-                    "val_ce={:.5f} val_supcon={:.5f} val_pressure={:.5f} val_maturity={:.5f} "
-                    "train_anchor_rate={:.4f} val_anchor_rate={:.4f}",
+                    "Aux losses | train_ce={:.5f} train_supcon={:.5f} train_pressure={:.5f} "
+                    "train_maturity={:.5f} train_long_aux={:.5f} "
+                    "val_ce={:.5f} val_supcon={:.5f} val_pressure={:.5f} "
+                    "val_maturity={:.5f} val_long_aux={:.5f} "
+                    "train_anchor_rate={:.4f} val_anchor_rate={:.4f} ce_weight={:.5f} supcon_weight={:.5f}",
                     train_ce_loss,
                     train_supcon_loss,
                     train_pressure_loss,
                     train_maturity_loss,
+                    train_long_aux_loss,
                     val_ce_loss,
                     val_supcon_loss,
                     val_pressure_loss,
                     val_maturity_loss,
+                    val_long_aux_loss,
                     train_anchor_rate,
                     val_anchor_rate,
+                    ce_weight,
+                    supcon_weight,
                 )
             logger.debug("Val metrics: {}", val_metrics)
+
+            if epoch in self.cfg.epoch_checkpoints:
+                self._save_checkpoint(f"epoch_{epoch:03d}.pt")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -167,13 +199,16 @@ class Stage1ATrainer:
         self,
         loader: DataLoader,
         train: bool,
-    ) -> tuple[float, float, float, float, float, float, float, float, dict[str, float]]:
+        ce_weight: float,
+        supcon_weight: float,
+    ) -> tuple[float, float, float, float, float, float, float, float, float, dict[str, float]]:
         self.model.train(train)
         total_loss = 0.0
         total_ce_loss = 0.0
         total_supcon_loss = 0.0
         total_pressure_loss = 0.0
         total_maturity_loss = 0.0
+        total_long_aux_loss = 0.0
         total_supcon_valid_anchors = 0.0
         total_supcon_positive_counts = 0.0
         total_supcon_anchors = 0.0
@@ -190,6 +225,7 @@ class Stage1ATrainer:
                 supcon_loss = ce_loss.new_zeros(())
                 pressure_loss = ce_loss.new_zeros(())
                 maturity_loss = ce_loss.new_zeros(())
+                long_aux_loss = ce_loss.new_zeros(())
                 if self.supcon_criterion is not None:
                     if self.cfg.supcon_embedding_key not in outputs:
                         raise KeyError(
@@ -250,11 +286,16 @@ class Stage1ATrainer:
                         device=self.device,
                     )
                     maturity_loss = self.aux_criterion(outputs["maturity_logits"], maturity_targets)
+                if self.cfg.long_aux_loss_weight > 0.0:
+                    if "long_aux_logits" not in outputs:
+                        raise KeyError("long_aux_logits not produced by model")
+                    long_aux_loss = self.aux_criterion(outputs["long_aux_logits"], y)
                 loss = (
-                    ce_loss
-                    + self.cfg.supcon_weight * supcon_loss
+                    ce_weight * ce_loss
+                    + supcon_weight * supcon_loss
                     + self.cfg.pressure_loss_weight * pressure_loss
                     + self.cfg.maturity_loss_weight * maturity_loss
+                    + self.cfg.long_aux_loss_weight * long_aux_loss
                 )
 
                 if train:
@@ -267,6 +308,7 @@ class Stage1ATrainer:
                 total_supcon_loss += supcon_loss.item() * short_x.size(0)
                 total_pressure_loss += pressure_loss.item() * short_x.size(0)
                 total_maturity_loss += maturity_loss.item() * short_x.size(0)
+                total_long_aux_loss += long_aux_loss.item() * short_x.size(0)
                 preds.append(outputs["logits"].argmax(dim=1).detach().cpu().numpy())
                 labels.append(y.detach().cpu().numpy())
 
@@ -280,11 +322,31 @@ class Stage1ATrainer:
             total_supcon_loss / dataset_len,
             total_pressure_loss / dataset_len,
             total_maturity_loss / dataset_len,
+            total_long_aux_loss / dataset_len,
             total_supcon_valid_anchors / total_supcon_anchors if total_supcon_anchors else 0.0,
             total_supcon_positive_counts / total_supcon_anchors if total_supcon_anchors else 0.0,
             macro_f1,
             per_class,
         )
+
+    def _ce_weight_for_epoch(self, epoch: int) -> float:
+        if (
+            self.cfg.ce_warmup_weight is not None
+            and self.cfg.ce_warmup_epochs > 0
+            and epoch <= self.cfg.ce_warmup_epochs
+        ):
+            return float(self.cfg.ce_warmup_weight)
+        return 1.0
+
+    def _supcon_weight_for_epoch(self, epoch: int) -> float:
+        if (
+            self.cfg.use_supcon
+            and self.cfg.supcon_frontload_weight is not None
+            and self.cfg.supcon_frontload_epochs > 0
+            and epoch <= self.cfg.supcon_frontload_epochs
+        ):
+            return float(self.cfg.supcon_frontload_weight)
+        return float(self.cfg.supcon_weight)
 
     def _supcon_positive_counts(
         self,

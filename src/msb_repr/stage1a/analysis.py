@@ -84,6 +84,10 @@ def load_checkpoint_bundle(
         num_maturity_classes=(
             int(metadata["num_maturity_classes"]) if metadata.get("num_maturity_classes") is not None else None
         ),
+        num_long_aux_classes=(
+            int(metadata["num_long_aux_classes"]) if metadata.get("num_long_aux_classes") is not None else None
+        ),
+        pressure_head_input=str(metadata.get("pressure_head_input", "z_fused")),
         projection_dim=int(metadata.get("projection_dim", 64)),
         long_projection_dim=(
             int(metadata["long_projection_dim"]) if metadata.get("long_projection_dim") is not None else None

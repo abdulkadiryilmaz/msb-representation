@@ -3,6 +3,8 @@ from __future__ import annotations
 import torch
 
 from msb_repr.stage1a.losses import SupConLoss
+from msb_repr.stage1a.model import Stage1AModel
+from msb_repr.stage1a.trainer import Stage1ATrainer, Stage1ATrainerConfig
 
 
 def test_supcon_loss_smaller_for_well_grouped_embeddings():
@@ -89,3 +91,31 @@ def test_supcon_loss_neutral_same_symbol_is_lower_than_diff_symbol_mode():
 
     assert neutral_loss.item() > 0.0
     assert neutral_loss.item() < diff_symbol_loss.item()
+
+
+def test_trainer_supcon_frontload_weight_schedule():
+    model = Stage1AModel(short_input_channels=2, long_input_channels=2)
+    cfg = Stage1ATrainerConfig(
+        use_supcon=True,
+        supcon_weight=0.05,
+        supcon_frontload_weight=0.10,
+        supcon_frontload_epochs=3,
+    )
+    trainer = Stage1ATrainer(model=model, device=torch.device("cpu"), cfg=cfg)
+
+    assert trainer._supcon_weight_for_epoch(1) == 0.10
+    assert trainer._supcon_weight_for_epoch(3) == 0.10
+    assert trainer._supcon_weight_for_epoch(4) == 0.05
+
+
+def test_trainer_ce_warmup_weight_schedule():
+    model = Stage1AModel(short_input_channels=2, long_input_channels=2)
+    cfg = Stage1ATrainerConfig(
+        ce_warmup_weight=0.0,
+        ce_warmup_epochs=5,
+    )
+    trainer = Stage1ATrainer(model=model, device=torch.device("cpu"), cfg=cfg)
+
+    assert trainer._ce_weight_for_epoch(1) == 0.0
+    assert trainer._ce_weight_for_epoch(5) == 0.0
+    assert trainer._ce_weight_for_epoch(6) == 1.0

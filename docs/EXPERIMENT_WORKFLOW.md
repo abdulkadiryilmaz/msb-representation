@@ -72,11 +72,47 @@ Before every new run:
 Minimum information to record while the run is active:
 
 - training device
-- early stopping epoch
+- fixed epoch budget or early stopping epoch
 - best val macro F1
 - any notable training behavior
 
 These notes will be summarized in the readout.
+
+### Stage 1A Representation Checkpoint Policy
+
+For representation-focused Stage 1A runs, `best.pt` is a training-loss checkpoint, not automatically the best representation checkpoint.
+
+Default policy:
+
+- prefer fixed-budget training over early stopping for representation experiments
+- keep `patience` high enough that training reaches the planned budget
+- save dense epoch checkpoints
+- select the representation checkpoint after the run using validation geometry diagnostics
+- reserve test split for final confirmation after the checkpoint has been selected
+
+Default dense checkpoint cadence:
+
+```text
+5, 10, then every 10 epochs until the run budget
+```
+
+For a 50 epoch run:
+
+```bash
+python scripts/train_stage1a.py \
+  --dataset-root data/stage1a/binance/15m \
+  --epochs 50 \
+  --patience 100 \
+  --batch-size 32 \
+  --use-supcon \
+  --supcon-weight 0.05 \
+  --supcon-temperature 0.1 \
+  --supcon-embedding-key z_long_proj \
+  --epoch-checkpoints 5 10 20 30 40 50 \
+  --checkpoint-dir data/stage1a/binance/15m/checkpoints/<variant>
+```
+
+Use the experiment plan to justify any different budget or cadence.
 
 ## 6. Required Post-Run Artifacts
 
@@ -109,12 +145,49 @@ Default order after a run finishes:
 5. Export test latents
 6. Run test analyze
 7. Run test embedding compare
-8. Compare side-by-side with baseline to beat
-9. Write readout document
-10. Update `EXPERIMENT_INDEX.md`:
+8. Run branch usage diagnostics
+9. Run bucket geometry diagnostics
+10. If dense checkpoints were saved, run validation geometry diagnostics for candidate epoch checkpoints
+11. Select `geometry_selected_checkpoint`
+12. Export and evaluate test latents for the selected checkpoint
+13. Compare side-by-side with baseline to beat
+14. Write readout document
+15. Update `EXPERIMENT_INDEX.md`:
     - Add row to Current Summary table
     - Add numerical values to all Metrics Snapshot tables (see Section 10)
-11. Update family README timeline if needed
+16. Update family README timeline if needed
+
+Standard diagnostic command templates:
+
+```bash
+python scripts/diagnose_stage1a_branch_usage.py \
+  --latent-path data/stage1a/binance/15m/checkpoints/<variant>/analysis/test_latents.npz \
+  --checkpoint-dir data/stage1a/binance/15m/checkpoints/<variant>
+
+python scripts/diagnose_stage1a_bucket_geometry.py \
+  --latent-path data/stage1a/binance/15m/checkpoints/<variant>/analysis/test_latents.npz
+```
+
+Dense checkpoint validation template:
+
+```bash
+python scripts/export_stage1a_latents.py \
+  --dataset-root data/stage1a/binance/15m \
+  --checkpoint-dir data/stage1a/binance/15m/checkpoints/<variant> \
+  --checkpoint-name epoch_040.pt \
+  --split val \
+  --output-path data/stage1a/binance/15m/checkpoints/<variant>/analysis/epoch_040_val_latents.npz
+
+python scripts/compare_stage1a_embedding_views.py \
+  --latent-path data/stage1a/binance/15m/checkpoints/<variant>/analysis/epoch_040_val_latents.npz
+
+python scripts/diagnose_stage1a_branch_usage.py \
+  --latent-path data/stage1a/binance/15m/checkpoints/<variant>/analysis/epoch_040_val_latents.npz \
+  --checkpoint-dir data/stage1a/binance/15m/checkpoints/<variant> \
+  --checkpoint-name epoch_040.pt
+```
+
+Repeat for each planned candidate epoch checkpoint.
 
 ## 8. Standard Comparison Axes
 
@@ -138,6 +211,25 @@ Key metrics to track:
 - mean NN symbol agreement
 - top-1 label match
 - top-1 symbol match
+
+### Branch usage guardrails
+
+- `z_long_norm / z_short_norm`
+- classifier effective `long/short` contribution
+- `z_long_proj` SupCon loss trend
+- `z_long` centroid `symbol/label` ratio
+
+Interpretation rule:
+
+- rising effective `long/short` contribution is necessary but not sufficient
+- if symbol agreement or centroid `symbol/label` ratio rises with it, the long branch may be becoming more symbol-bound rather than more structural
+
+### Bucket geometry guardrails
+
+- clean intact vs borderline distance
+- borderline vs confirmed distance
+- wick sweep vs confirmed distance
+- `z_long` and `z_long_proj` bucket centroid distances
 
 ### Bucket
 
@@ -166,6 +258,10 @@ Critical rule:
 
 - decisions are never made on macro F1 alone
 - latent geometry is the primary decision axis
+- checkpoint selection must be made on validation geometry, not test geometry
+- `best.pt` by val loss should be reported separately from the selected representation checkpoint
+
+If a readout uses test split to inspect multiple epoch checkpoints, label it clearly as retrospective diagnosis and do not treat it as a reusable selection protocol.
 
 ## 10. When to Update the Experiment Index
 
