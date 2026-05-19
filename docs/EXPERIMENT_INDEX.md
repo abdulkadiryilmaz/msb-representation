@@ -13,23 +13,32 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 
 - `docs/foundations/market-structure-edge-program.md`
 - `docs/foundations/stage1-msb-representation-framing.md`
+- `docs/foundations/stage1b-forward-labels.md`
+- `docs/foundations/stage1b-output-contract.md`
 
 `market-structure-edge-program.md`, repo üstü program hedefini, mission/thesis ayrımını ve nihai `TradePlan` çıktısını tanımlar.
 
 `stage1-msb-representation-framing.md`, Stage 1A araştırma yönünü ve representation-learning çerçevesini tanımlar. Deney okumalarından önce bu iki foundations belgesiyle başlamak en doğru giriş olur.
 
+`stage1b-forward-labels.md`, Stage 1B için ilk `future_break_direction_H` label sözleşmesini ve predictor öncesi guardrail'leri tanımlar.
+
+`stage1b-output-contract.md`, seçili H8 predictor'ın Stage 2'ye hangi sinyal ve fiyat bağlamıyla aktarılacağını tanımlar.
+
 ## Current Active Experiment
 
 - active run:
-  - downstream transfer readiness / Stage 1B hazırlığı
+  - Stage 2 actionability / TradePlan bridge tasarımına hazırlık
   - selected Stage 1A checkpoint: `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
+  - selected Stage 1B checkpoint: `stage1b_h8_predictor_v1a_z_fused/best.pt`
 - latest completed:
-  - `CE + SupCon | long branch CE aux v1`
-  - readout: `docs/experiments/ce_supcon/2026-05-17-ce-supcon-long-branch-ce-aux-v1-readout.md`
+  - `Stage 1B synthesis / close-out`
+  - readout: `docs/experiments/stage1b/2026-05-19-stage1b-synthesis-closeout.md`
 - latest result:
-  - `long branch CE aux v1` seed 41 ve seed 42 tamamlandı
-  - val-selected checkpoints: `seed_41/epoch_020.pt`, `seed_42/epoch_020.pt`
-  - seed 41 güçlü; seed 42 global metriklerde dominant warmup'a yakın, bucket tarafında `long_v1`ten iyi ama direction asymmetry sürüyor
+  - Stage 1B kapatıldı
+  - selected Stage 1B baseline: `stage1b_h8_predictor_v1a_z_fused`
+  - H8 test reconstructed macro F1: `0.7307`
+  - H8 break confidence `0.90-1.00` bucket accuracy: `0.9532`
+  - sonuç: Stage 2'ye `Stage1BSignal + Stage1BContext` sözleşmesiyle geçilebilir
 - current best candidate:
   - `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
 
@@ -52,6 +61,17 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 | `CE + SupCon` | long SupCon-only warmup v1 | diagnostic | `z_long` düzeldi ama `z_short` / `z_fused` branch dengesi bozuldu |
 | `CE + SupCon` | long SupCon-dominant warmup v1 | best balanced schedule candidate | seed 41 ve seed 42'de `z_long` temizlendi, branch dengesi korundu |
 | `CE + SupCon` | long branch CE aux v1 | selected for downstream transfer | `seed_41/epoch_020.pt` Stage 1A aktarım adayı seçildi; seed 42 bucket asimetrisi sonraki model iyileştirme konusu |
+| `Stage 1B` | forward direction probe v1 | transfer signal found | H16/H32/H48 future break direction label'ları üretildi; `z_fused` linear probe H16 `0.6768`, H32 `0.6183`, H48 `0.5807` |
+| `Stage 1B` | H16 predictor v1a | accepted baseline | two-head predictor; test reconstructed macro F1 `0.6731`, break F1 `0.7015`, direction F1 `0.8330` |
+| `Stage 1B` | H16 + H32 predictor v1b | accepted multi-horizon baseline | H16 test reconstructed macro F1 `0.6765`; H32 direction signal useful, H32 break occurrence weak |
+| `Stage 1B` | H16=None / H32=Break segment | diagnostic | delayed segment test support `%13.6`; precision `0.2451`, recall `0.4761`, H32 direction F1 `0.5416` |
+| `Stage 1B` | forward label audit v1 | completed | H16/H32 consistency clean; labels are break-heavy, H32 test break rate `0.8210` |
+| `Stage 1B` | short-horizon label + probe v1 | completed | H4/H8 more readable than H16; H8 selected as next predictor target |
+| `Stage 1B` | H8 predictor v1a | accepted primary baseline | test reconstructed macro F1 `0.7307`, break F1 `0.7497`, direction F1 `0.8955` |
+| `Stage 1B` | H8 + H16 predictor v1b | rejected | H8 test reconstructed macro F1 `0.7270`; H16 equal-weight auxiliary does not improve H8 |
+| `Stage 1B` | H8 predictor error audit v1 | completed | high-confidence predictions reliable; 0.90-1.00 break confidence bucket accuracy `0.9532` |
+| `Stage 1B` | H8 visual / proximity diagnostic v1 | completed | high-confidence signals are level-proximity driven; Stage 2 needs price/level context |
+| `Stage 1B` | synthesis / close-out | completed | H8 predictor v1a selected for Stage 2 handoff |
 
 ## Metrics Snapshot
 
