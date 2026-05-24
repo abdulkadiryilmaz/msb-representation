@@ -32,6 +32,13 @@ def _label_counts(values: np.ndarray) -> dict[str, int]:
     return {str(label): int(count) for label, count in zip(unique, counts, strict=True)}
 
 
+def _balanced_weights(values: np.ndarray, labels: list[int]) -> list[float]:
+    flat = values.reshape(-1)
+    counts = np.array([max(1, int(np.sum(flat == label))) for label in labels], dtype=np.float64)
+    weights = counts.sum() / (len(labels) * counts)
+    return [float(weight) for weight in weights]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-latent-path", type=Path, required=True)
@@ -41,6 +48,7 @@ def main() -> None:
     parser.add_argument("--test-latent-path", type=Path, default=None)
     parser.add_argument("--test-label-path", type=Path, default=None)
     parser.add_argument("--feature-keys", nargs="+", default=["z_fused"])
+    parser.add_argument("--context-feature-keys", nargs="*", default=[])
     parser.add_argument("--target-column", type=str, default="h16_future_break_direction")
     parser.add_argument("--target-columns", nargs="*", default=None)
     parser.add_argument("--hidden-dim", type=int, default=64)
@@ -52,6 +60,8 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--break-loss-weight", type=float, default=1.0)
     parser.add_argument("--direction-loss-weight", type=float, default=1.0)
+    parser.add_argument("--balanced-break-loss", action="store_true")
+    parser.add_argument("--balanced-direction-loss", action="store_true")
     parser.add_argument("--break-threshold", type=float, default=0.5)
     parser.add_argument("--primary-horizon-index", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -63,6 +73,7 @@ def main() -> None:
         latent_path=args.train_latent_path,
         label_path=args.train_label_path,
         feature_keys=args.feature_keys,
+        context_feature_keys=args.context_feature_keys,
         target_column=args.target_column,
         target_columns=args.target_columns,
     )
@@ -70,6 +81,7 @@ def main() -> None:
         latent_path=args.val_latent_path,
         label_path=args.val_label_path,
         feature_keys=args.feature_keys,
+        context_feature_keys=args.context_feature_keys,
         target_column=args.target_column,
         target_columns=args.target_columns,
     )
@@ -106,6 +118,8 @@ def main() -> None:
         train_dataset.input_dim,
         args.feature_keys,
     )
+    if args.context_feature_keys:
+        logger.info("Stage 1B context features: {}", args.context_feature_keys)
 
     trainer = Stage1BTrainer(
         model=model,
@@ -117,6 +131,15 @@ def main() -> None:
             patience=args.patience,
             break_loss_weight=args.break_loss_weight,
             direction_loss_weight=args.direction_loss_weight,
+            break_class_weights=_balanced_weights(train_dataset.break_targets, labels=[0, 1])
+            if args.balanced_break_loss
+            else None,
+            direction_class_weights=_balanced_weights(
+                train_dataset.direction_targets[train_dataset.direction_targets >= 0],
+                labels=[0, 1],
+            )
+            if args.balanced_direction_loss
+            else None,
             break_threshold=args.break_threshold,
             primary_horizon_index=args.primary_horizon_index,
             checkpoint_dir=args.checkpoint_dir,
@@ -139,6 +162,7 @@ def main() -> None:
             latent_path=args.test_latent_path,
             label_path=args.test_label_path,
             feature_keys=args.feature_keys,
+            context_feature_keys=args.context_feature_keys,
             target_column=args.target_column,
             target_columns=args.target_columns,
         )
@@ -155,12 +179,15 @@ def main() -> None:
         "target_column": args.target_column,
         "target_columns": train_dataset.target_columns,
         "feature_keys": args.feature_keys,
+        "context_feature_keys": args.context_feature_keys,
         "input_dim": train_dataset.input_dim,
         "num_horizons": len(train_dataset.target_columns),
         "hidden_dim": args.hidden_dim,
         "dropout": args.dropout,
         "seed": args.seed,
         "device": str(device),
+        "balanced_break_loss": bool(args.balanced_break_loss),
+        "balanced_direction_loss": bool(args.balanced_direction_loss),
         "train_samples": len(train_dataset),
         "val_samples": len(val_dataset),
         "test_samples": test_samples,

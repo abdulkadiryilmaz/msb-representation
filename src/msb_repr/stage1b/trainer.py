@@ -24,6 +24,8 @@ class Stage1BTrainerConfig:
     patience: int = 10
     break_loss_weight: float = 1.0
     direction_loss_weight: float = 1.0
+    break_class_weights: list[float] | None = None
+    direction_class_weights: list[float] | None = None
     break_threshold: float = 0.5
     primary_horizon_index: int = 0
     checkpoint_dir: Path = Path("data/checkpoints/stage1b")
@@ -66,7 +68,18 @@ class Stage1BTrainer:
             lr=cfg.lr,
             weight_decay=cfg.weight_decay,
         )
-        self.criterion = nn.CrossEntropyLoss()
+        break_weights = (
+            torch.tensor(cfg.break_class_weights, dtype=torch.float32, device=device)
+            if cfg.break_class_weights is not None
+            else None
+        )
+        direction_weights = (
+            torch.tensor(cfg.direction_class_weights, dtype=torch.float32, device=device)
+            if cfg.direction_class_weights is not None
+            else None
+        )
+        self.break_criterion = nn.CrossEntropyLoss(weight=break_weights)
+        self.direction_criterion = nn.CrossEntropyLoss(weight=direction_weights)
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader) -> dict[str, list[float]]:
         best_score = -float("inf")
@@ -169,14 +182,14 @@ class Stage1BTrainer:
                     break_targets = break_targets[:, None]
                     direction_targets = direction_targets[:, None]
                     recon_targets = recon_targets[:, None]
-                break_loss = self.criterion(
+                break_loss = self.break_criterion(
                     break_logits.reshape(-1, 2),
                     break_targets.reshape(-1),
                 )
 
                 direction_mask = direction_targets >= 0
                 if bool(direction_mask.any()):
-                    direction_loss = self.criterion(
+                    direction_loss = self.direction_criterion(
                         direction_logits[direction_mask],
                         direction_targets[direction_mask],
                     )

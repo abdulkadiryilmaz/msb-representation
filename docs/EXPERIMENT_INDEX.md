@@ -15,6 +15,8 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 - `docs/foundations/stage1-msb-representation-framing.md`
 - `docs/foundations/stage1b-forward-labels.md`
 - `docs/foundations/stage1b-output-contract.md`
+- `docs/foundations/stage2-actionability-framing.md`
+- `docs/foundations/stage2-actionability-labels.md`
 
 `market-structure-edge-program.md`, repo üstü program hedefini, mission/thesis ayrımını ve nihai `TradePlan` çıktısını tanımlar.
 
@@ -24,21 +26,28 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 
 `stage1b-output-contract.md`, seçili H8 predictor'ın Stage 2'ye hangi sinyal ve fiyat bağlamıyla aktarılacağını tanımlar.
 
+`stage2-actionability-framing.md`, Stage 1B sinyalinden `no_trade / wait / actionable` kararına geçiş için ilk Stage 2 çerçevesini tanımlar.
+
+`stage2-actionability-labels.md`, Stage 2 v1 için rule-based actionability label sözleşmesini tanımlar.
+
 ## Current Active Experiment
 
 - active run:
-  - Stage 2 actionability / TradePlan bridge tasarımına hazırlık
+  - Stage 1B event-sequence predictor design
   - selected Stage 1A checkpoint: `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
-  - selected Stage 1B checkpoint: `stage1b_h8_predictor_v1a_z_fused/best.pt`
+  - selected Stage 1B H8 checkpoint: `stage1b_h8_fresh_break_v3_z_fused_proximity/best.pt`
+  - selected Stage 1B H16 checkpoint: `stage1b_h16_dominant_v3_z_fused_proximity/best.pt`
+  - foundation: `docs/foundations/stage1b-output-contract.md`
 - latest completed:
-  - `Stage 1B synthesis / close-out`
-  - readout: `docs/experiments/stage1b/2026-05-19-stage1b-synthesis-closeout.md`
+  - `Stage 1B event-sequence contract v2`
+  - readout: `docs/experiments/stage1b/2026-05-24-stage1b-event-sequence-contract-v2-readout.md`
 - latest result:
-  - Stage 1B kapatıldı
-  - selected Stage 1B baseline: `stage1b_h8_predictor_v1a_z_fused`
-  - H8 test reconstructed macro F1: `0.7307`
-  - H8 break confidence `0.90-1.00` bucket accuracy: `0.9532`
-  - sonuç: Stage 2'ye `Stage1BSignal + Stage1BContext` sözleşmesiyle geçilebilir
+  - Stage 1B output contract `fresh break only` semantiğinden `event_type + event_direction` sözleşmesine taşındı
+  - label generator artık `h{H}_event_type` ve `h{H}_event_direction` alanlarını üretiyor
+  - index 453 artık `fresh_break=none` kalırken `event_type=reversal`, `event_direction=bearish` olarak ayrışıyor
+  - index 454 `event_type=fresh_break`, `event_direction=bearish`
+  - H8 reversal sınıfı seyrek: test `25`; H16 reversal daha kullanılabilir: test `112`
+  - sonuç: H8 fresh-trigger için, H16 ise event-sequence / reversal-continuation çalışması için daha uygun aday
 - current best candidate:
   - `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
 
@@ -72,6 +81,14 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 | `Stage 1B` | H8 predictor error audit v1 | completed | high-confidence predictions reliable; 0.90-1.00 break confidence bucket accuracy `0.9532` |
 | `Stage 1B` | H8 visual / proximity diagnostic v1 | completed | high-confidence signals are level-proximity driven; Stage 2 needs price/level context |
 | `Stage 1B` | synthesis / close-out | completed | H8 predictor v1a selected for Stage 2 handoff |
+| `Stage 1B` | H8 fresh break semantics audit v1 | completed | H8 directional label'ların `%66.00` kadarı already-broken; v2 label anchor-side ayrımı gerektiriyor |
+| `Stage 1B` | H8 fresh break v2 | diagnostic | fresh-trigger target materially harder; balanced predictor test recon macro F1 `0.4472` at threshold `0.57` |
+| `Stage 1B` | event sequence v2 | completed | `post_break_outcome` eklendi; H16 dominant direction test macro F1 `0.6181` |
+| `Stage 1B` | Stage 1A latent proximity probe v1 | diagnostic | intact örneklerde nearest side okunuyor (`z_fused` linear F1 `0.7644`), distance bucket zayıf (`0.4295`) |
+| `Stage 1B` | proximity-enriched predictor v3 | accepted diagnostic | `z_fused + explicit context`; H8 fresh recon F1 `0.5971`, direction F1 `0.8412`; index 454 hatası düzeldi |
+| `Stage 1B` | event-sequence contract v2 | completed | output contract `event_type + event_direction`; H8 reversal seyrek, H16 event-sequence predictor sonraki aday |
+| `Stage 2` | actionability label v1 | completed | rule-based labels generated; false-positive Stage 1B breaks mostly filtered to `no_trade` |
+| `Stage 2` | actionability threshold sweep v1 | completed | selected `min_confidence=0.80`, `min_mfe_r=1.0`; false-positive actionable count drops to `0` |
 
 ## Metrics Snapshot
 

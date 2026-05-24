@@ -14,6 +14,62 @@ from torch.utils.data import Dataset
 DIRECTION_LABEL_TO_ID = {"bullish": 0, "bearish": 1}
 RECON_LABEL_TO_ID = {"none": 0, "bullish": 1, "bearish": 2}
 RECON_ID_TO_LABEL = {idx: label for label, idx in RECON_LABEL_TO_ID.items()}
+DEFAULT_RECENT_BARS = 12
+
+
+def _finite_float(value: object) -> float:
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _float_column(df: pl.DataFrame, column: str) -> np.ndarray:
+    return df.get_column(column).cast(pl.Float64, strict=False).fill_null(np.nan).to_numpy()
+
+
+def _context_feature_matrix(
+    df: pl.DataFrame,
+    latent: np.lib.npyio.NpzFile,
+    indices: np.ndarray,
+    feature_keys: list[str],
+) -> np.ndarray:
+    current_close = _float_column(df, "current_close")
+    bull_level = _float_column(df, "bull_level")
+    bear_level = _float_column(df, "bear_level")
+    valid_close = np.isfinite(current_close) & (current_close > 0)
+    bull_distance_pct = np.zeros(len(df), dtype=np.float32)
+    bear_distance_pct = np.zeros(len(df), dtype=np.float32)
+    bull_mask = valid_close & np.isfinite(bull_level)
+    bear_mask = valid_close & np.isfinite(bear_level)
+    bull_distance_pct[bull_mask] = ((bull_level[bull_mask] - current_close[bull_mask]) / current_close[bull_mask]).astype(
+        np.float32
+    )
+    bear_distance_pct[bear_mask] = ((current_close[bear_mask] - bear_level[bear_mask]) / current_close[bear_mask]).astype(
+        np.float32
+    )
+    nearest_distance_pct = np.minimum(np.abs(bull_distance_pct), np.abs(bear_distance_pct)).astype(np.float32)
+    nearest_side_signed = np.where(np.abs(bull_distance_pct) <= np.abs(bear_distance_pct), 1.0, -1.0).astype(np.float32)
+    current_labels = df.get_column("current_label").cast(pl.String).to_numpy()
+
+    values: dict[str, np.ndarray] = {
+        "bull_distance_pct_scaled": bull_distance_pct * 100.0,
+        "bear_distance_pct_scaled": bear_distance_pct * 100.0,
+        "nearest_distance_pct_scaled": nearest_distance_pct * 100.0,
+        "nearest_side_signed": nearest_side_signed,
+        "bull_close_count_norm": latent["bull_close_count"][indices].astype(np.float32) / DEFAULT_RECENT_BARS,
+        "bear_close_count_norm": latent["bear_close_count"][indices].astype(np.float32) / DEFAULT_RECENT_BARS,
+        "bull_wick_count_norm": latent["bull_wick_count"][indices].astype(np.float32) / DEFAULT_RECENT_BARS,
+        "bear_wick_count_norm": latent["bear_wick_count"][indices].astype(np.float32) / DEFAULT_RECENT_BARS,
+        "bull_final_excess_scaled": np.nan_to_num(latent["bull_final_excess"][indices].astype(np.float32)) * 100.0,
+        "bear_final_excess_scaled": np.nan_to_num(latent["bear_final_excess"][indices].astype(np.float32)) * 100.0,
+        "current_label_intact": (current_labels == "intact").astype(np.float32),
+        "current_label_bullish": (current_labels == "bullish").astype(np.float32),
+        "current_label_bearish": (current_labels == "bearish").astype(np.float32),
+    }
+    return np.stack([values[key] for key in feature_keys], axis=1).astype(np.float32)
 
 
 @dataclass(frozen=True)
@@ -38,6 +94,7 @@ class Stage1BForwardDataset(Dataset):
         target_columns: list[str],
         latent_path: Path,
         label_path: Path,
+        context_feature_keys: list[str] | None = None,
     ) -> None:
         if not (
             len(features)
@@ -53,6 +110,7 @@ class Stage1BForwardDataset(Dataset):
         self.recon_targets = recon_targets.astype(np.int64)
         self.metas = metas
         self.feature_keys = feature_keys
+        self.context_feature_keys = context_feature_keys or []
         self.target_columns = target_columns
         self.latent_path = latent_path
         self.label_path = label_path
@@ -65,6 +123,7 @@ class Stage1BForwardDataset(Dataset):
         feature_keys: list[str],
         target_column: str = "h16_future_break_direction",
         target_columns: list[str] | None = None,
+        context_feature_keys: list[str] | None = None,
         drop_labels: set[str] | None = None,
     ) -> "Stage1BForwardDataset":
         drop_labels = drop_labels or {"ambiguous", "insufficient_future"}
@@ -85,6 +144,10 @@ class Stage1BForwardDataset(Dataset):
             if values.ndim == 1:
                 values = values[:, None]
             feature_parts.append(values.astype(np.float32))
+        context_feature_keys = context_feature_keys or []
+        if context_feature_keys:
+            context_features = _context_feature_matrix(valid_df, latent, indices, context_feature_keys)
+            feature_parts.append(context_features)
         features = np.concatenate(feature_parts, axis=1)
 
         raw_label_columns = [valid_df[column].to_numpy().astype(str) for column in target_columns]
@@ -129,6 +192,7 @@ class Stage1BForwardDataset(Dataset):
             recon_targets=recon_targets,
             metas=metas,
             feature_keys=feature_keys,
+            context_feature_keys=context_feature_keys,
             target_columns=target_columns,
             latent_path=latent_path,
             label_path=label_path,

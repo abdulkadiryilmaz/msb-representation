@@ -105,6 +105,7 @@ def _enrich_rows(
         label_row = label_rows[index]
         current_close = anchor_closes[(symbol, timestamp)]
         enriched = {
+            **label_row,
             **row,
             "bull_level": label_row.get("bull_level"),
             "bear_level": label_row.get("bear_level"),

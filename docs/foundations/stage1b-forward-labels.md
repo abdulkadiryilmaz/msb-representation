@@ -1,11 +1,15 @@
 # Stage 1B Forward Labels
 
-**Status**: Draft v1
+**Status**: Draft v2, event-sequence fields active
 **Scope**: Stage 1B research labels for forward structure forecasting
 **Primary timeframe**: 15m
 **Initial horizons**: `H = 16, 32, 48`
 
-Bu belge Stage 1B için ilk forward label sözleşmesini tanımlar. Amaç, Stage 1A temsilinden yakın gelecekteki yapısal akışın okunup okunamadığını ölçmek ve ileride eğitilecek Stage 1B predictor için aynı label semantiğini sabitlemektir.
+Bu belge Stage 1B için forward label sözleşmesini tanımlar. Amaç, Stage 1A temsilinden yakın gelecekteki yapısal akışın okunup okunamadığını ölçmek ve Stage 1B predictor için aynı label semantiğini sabitlemektir.
+
+Not: 2026-05-22 H8 fresh-break semantics audit'i, v1 label'ın fresh break ile already-broken / continuation durumlarını aynı directional sınıfta topladığını gösterdi. Bu nedenle v1 sonuçları forward structural state okuması olarak değerlidir, fakat doğrudan "henüz gelmemiş trigger oluşacak" anlamında kullanılmamalıdır.
+
+Not 2: 2026-05-23 event-sequence readout'u, ilk break yönünün TradePlan için tek başına yeterli olmadığını gösterdi. Stage 1B v2, ilk break sonrasındaki continuation / failed break / reversal outcome bilgisini de taşımalıdır.
 
 Bu label seti TradePlan label'ı değildir. Entry, stop, target, leverage, position sizing veya PnL sonucu üretmez.
 
@@ -142,6 +146,32 @@ Bearish confirmation:
 future_close < bear_level
 ```
 
+V1'de bu confirmation yalnızca future close'lara bakar. Anchor anındaki `current_close` değerinin pre-break tarafta olup olmadığı kontrol edilmez.
+
+Bu yüzden v1'de şu iki durum aynı label'a düşebilir:
+
+```text
+fresh break:
+  current_close pre-break tarafta
+  future_close break seviyesini sonra geçiyor
+
+already-broken / continuation:
+  current_close zaten break seviyesinin ötesinde
+  future_close horizon içinde orada kalıyor veya devam ediyor
+```
+
+TradePlan'a yakın semantik için bu ayrım gereklidir. Fresh break için ek koşul:
+
+```text
+bullish fresh candidate:
+  current_close < bull_level
+  future_close > bull_level
+
+bearish fresh candidate:
+  current_close > bear_level
+  future_close < bear_level
+```
+
 Bir direction'ın confirm olması için horizon içinde en az:
 
 ```text
@@ -212,6 +242,92 @@ h{H}_bear_close_count
 
 Bunlar Stage 1B predictor ve Stage 2 tasarımında yardımcı olabilir, fakat v1 ana hedefi değildir.
 
+V2 için eklenmesi gereken alan:
+
+```text
+h{H}_break_anchor_status
+```
+
+Önerilen değerler:
+
+| Value | Anlam |
+|---|---|
+| `fresh_candidate` | Anchor pre-break tarafta; horizon içinde yeni break oluşuyor |
+| `already_broken` | Anchor anında fiyat zaten ilgili break seviyesinin ötesinde |
+| `not_directional` | Directional break label yok |
+
+Alternatif daha güçlü sözleşme, ana label'ı doğrudan şu sınıflara bölmektir:
+
+```text
+fresh_bullish_break
+fresh_bearish_break
+already_broken_bullish
+already_broken_bearish
+none
+ambiguous
+insufficient_future
+```
+
+V2 event-sequence alanları:
+
+```text
+h{H}_post_break_outcome
+h{H}_dominant_forward_direction
+h{H}_event_type
+h{H}_event_direction
+```
+
+`post_break_outcome` değerleri:
+
+| Value | Anlam |
+|---|---|
+| `bullish_continuation` | İlk break bullish; horizon sonunda bullish break tarafı korunuyor; bearish confirm yok |
+| `bearish_continuation` | İlk break bearish; horizon sonunda bearish break tarafı korunuyor; bullish confirm yok |
+| `failed_bullish_break` | İlk break bullish; horizon sonunda bull level korunmuyor; bearish confirm yok |
+| `failed_bearish_break` | İlk break bearish; horizon sonunda bear level korunmuyor; bullish confirm yok |
+| `bullish_to_bearish_reversal` | İlk break bullish; sonra bearish close-confirmed break geliyor |
+| `bearish_to_bullish_reversal` | İlk break bearish; sonra bullish close-confirmed break geliyor |
+| `none` | Horizon içinde directional break yok |
+| `ambiguous` | Direction assignment ambiguous |
+| `insufficient_future` | Horizon kadar future bar yok |
+
+`dominant_forward_direction` değerleri:
+
+```text
+none / bullish / bearish / ambiguous / insufficient_future
+```
+
+Bu alan TradePlan yönü değildir. Ancak Stage 2'ye, ilk event'in devam mı ettiği, başarısız mı olduğu, yoksa karşı yöne mi döndüğü hakkında daha trade-relevant forward structure sinyali verir.
+
+`event_type` değerleri:
+
+| Value | Anlam |
+|---|---|
+| `no_event` | Horizon içinde trade-relevant event yok veya failed break outcome'u konservatif olarak trade event'e dönüştürülmedi |
+| `fresh_break` | Anchor pre-break tarafta; horizon içinde yeni close-confirmed break oluşuyor |
+| `continuation` | Anchor zaten broken veya ilk event sonrası aynı yön korunuyor |
+| `reversal` | Anchor/ilk event sonrası karşı yönde close-confirmed break geliyor |
+| `ambiguous` | Direction assignment ambiguous |
+| `insufficient_future` | Horizon kadar future bar yok |
+
+`event_direction` değerleri:
+
+```text
+none / bullish / bearish / ambiguous / insufficient_future
+```
+
+Örnek mapping:
+
+| Durum | event_type | event_direction |
+|---|---|---|
+| `fresh_bullish_break` | `fresh_break` | `bullish` |
+| `fresh_bearish_break` | `fresh_break` | `bearish` |
+| `bullish_continuation` | `continuation` | `bullish` |
+| `bearish_continuation` | `continuation` | `bearish` |
+| `bullish_to_bearish_reversal` | `reversal` | `bearish` |
+| `bearish_to_bullish_reversal` | `reversal` | `bullish` |
+| `failed_bullish_break` / `failed_bearish_break` | `no_event` | `none` |
+
 ---
 
 ## What This Label Does Not Mean
@@ -224,6 +340,8 @@ long trade alınmalı
 
 Bu label yalnızca horizon içinde ilk structural break yönünü söyler. Şunları ölçmez:
 
+- anchor anında trigger seviyesinin henüz gelmemiş olup olmadığını
+- ilk break sonrası continuation / failed break / reversal davranışını
 - entry kalitesi
 - stop / invalidation seviyesi
 - target seviyesi

@@ -45,6 +45,95 @@ def _direction_label(
     return "bearish", bear_bar
 
 
+def _anchor_break_status(
+    direction: str,
+    current_close: float,
+    bull_level: float | None,
+    bear_level: float | None,
+) -> str:
+    if direction == "bullish" and bull_level is not None:
+        return "already_broken" if current_close >= bull_level else "fresh_candidate"
+    if direction == "bearish" and bear_level is not None:
+        return "already_broken" if current_close <= bear_level else "fresh_candidate"
+    if direction == "ambiguous":
+        return "ambiguous"
+    if direction == "insufficient_future":
+        return "insufficient_future"
+    return "not_directional"
+
+
+def _fresh_break_direction(direction: str, anchor_status: str) -> str:
+    if anchor_status == "fresh_candidate" and direction in {"bullish", "bearish"}:
+        return direction
+    if direction in {"ambiguous", "insufficient_future"}:
+        return direction
+    return "none"
+
+
+def _semantic_break_label(direction: str, anchor_status: str) -> str:
+    if direction == "bullish" and anchor_status == "fresh_candidate":
+        return "fresh_bullish_break"
+    if direction == "bearish" and anchor_status == "fresh_candidate":
+        return "fresh_bearish_break"
+    if direction == "bullish" and anchor_status == "already_broken":
+        return "already_broken_bullish"
+    if direction == "bearish" and anchor_status == "already_broken":
+        return "already_broken_bearish"
+    if direction in {"ambiguous", "insufficient_future"}:
+        return direction
+    return "none"
+
+
+def _post_break_outcome(
+    direction: str,
+    bull_bar: int | None,
+    bear_bar: int | None,
+    future: np.ndarray,
+    bull_level: float | None,
+    bear_level: float | None,
+    ambiguity_bars: int,
+) -> tuple[str, str]:
+    if direction in {"none", "ambiguous", "insufficient_future"}:
+        return direction, "none" if direction == "none" else direction
+
+    final_close = float(future[-1]) if len(future) else np.nan
+    if direction == "bullish":
+        assert bull_bar is not None
+        if bear_bar is not None and bear_bar > bull_bar + ambiguity_bars:
+            return "bullish_to_bearish_reversal", "bearish"
+        if bull_level is not None and np.isfinite(final_close) and final_close <= bull_level:
+            return "failed_bullish_break", "none"
+        return "bullish_continuation", "bullish"
+
+    if direction == "bearish":
+        assert bear_bar is not None
+        if bull_bar is not None and bull_bar > bear_bar + ambiguity_bars:
+            return "bearish_to_bullish_reversal", "bullish"
+        if bear_level is not None and np.isfinite(final_close) and final_close >= bear_level:
+            return "failed_bearish_break", "none"
+        return "bearish_continuation", "bearish"
+
+    return "none", "none"
+
+
+def _event_sequence_label(
+    fresh_direction: str,
+    post_break_outcome: str,
+    dominant_direction: str,
+) -> tuple[str, str]:
+    if post_break_outcome == "insufficient_future":
+        return "insufficient_future", "insufficient_future"
+    if post_break_outcome == "ambiguous" or fresh_direction == "ambiguous":
+        return "ambiguous", "ambiguous"
+    if fresh_direction in {"bullish", "bearish"}:
+        return "fresh_break", fresh_direction
+    if post_break_outcome in {"bullish_continuation", "bearish_continuation"}:
+        return "continuation", dominant_direction
+    if post_break_outcome in {"bullish_to_bearish_reversal", "bearish_to_bullish_reversal"}:
+        return "reversal", dominant_direction
+    return "no_event", "none"
+
+
 def _levels_from_short_window(
     short_window: np.ndarray,
     label_config: Any,
@@ -126,11 +215,13 @@ def _build_rows(
             short_window = ds_short_windows[ds_ts_to_idx[ts]]
             bull_level, bear_level, effective_break_pct = _levels_from_short_window(short_window, spec.labels)
             raw_idx = raw_ts_to_idx[ts]
+            current_close = float(raw_closes[raw_idx])
             row: dict[str, object] = {
                 "index": int(export_idx),
                 "symbol": symbol,
                 "timestamp": ts,
                 "current_label": LABEL_NAMES[int(arrays["labels"][export_idx])],
+                "current_close": current_close,
                 "has_bull_level": bull_level is not None,
                 "has_bear_level": bear_level is not None,
                 "bull_level": None if bull_level is None else float(bull_level),
@@ -149,6 +240,13 @@ def _build_rows(
                     row[f"{prefix}_bear_confirm_bar"] = -1
                     row[f"{prefix}_bull_close_count"] = 0
                     row[f"{prefix}_bear_close_count"] = 0
+                    row[f"{prefix}_break_anchor_status"] = "insufficient_future"
+                    row[f"{prefix}_fresh_break_direction"] = "insufficient_future"
+                    row[f"{prefix}_break_semantic_label"] = "insufficient_future"
+                    row[f"{prefix}_post_break_outcome"] = "insufficient_future"
+                    row[f"{prefix}_dominant_forward_direction"] = "insufficient_future"
+                    row[f"{prefix}_event_type"] = "insufficient_future"
+                    row[f"{prefix}_event_direction"] = "insufficient_future"
                     continue
 
                 bull_excess = np.zeros_like(future, dtype=np.float32)
@@ -167,6 +265,16 @@ def _build_rows(
                     int(spec.labels.min_recent_break_bars),
                 )
                 direction, time_to_break = _direction_label(bull_bar, bear_bar, ambiguity_bars)
+                anchor_status = _anchor_break_status(direction, current_close, bull_level, bear_level)
+                post_break_outcome, dominant_direction = _post_break_outcome(
+                    direction=direction,
+                    bull_bar=bull_bar,
+                    bear_bar=bear_bar,
+                    future=future,
+                    bull_level=bull_level,
+                    bear_level=bear_level,
+                    ambiguity_bars=ambiguity_bars,
+                )
                 row[f"{prefix}_future_break_direction"] = direction
                 row[f"{prefix}_future_break_occurs"] = direction in {"bullish", "bearish", "ambiguous"}
                 row[f"{prefix}_time_to_break"] = int(time_to_break)
@@ -174,6 +282,19 @@ def _build_rows(
                 row[f"{prefix}_bear_confirm_bar"] = -1 if bear_bar is None else int(bear_bar)
                 row[f"{prefix}_bull_close_count"] = int(np.sum(bull_excess > 0.0))
                 row[f"{prefix}_bear_close_count"] = int(np.sum(bear_excess > 0.0))
+                row[f"{prefix}_break_anchor_status"] = anchor_status
+                fresh_direction = _fresh_break_direction(direction, anchor_status)
+                event_type, event_direction = _event_sequence_label(
+                    fresh_direction=fresh_direction,
+                    post_break_outcome=post_break_outcome,
+                    dominant_direction=dominant_direction,
+                )
+                row[f"{prefix}_fresh_break_direction"] = fresh_direction
+                row[f"{prefix}_break_semantic_label"] = _semantic_break_label(direction, anchor_status)
+                row[f"{prefix}_post_break_outcome"] = post_break_outcome
+                row[f"{prefix}_dominant_forward_direction"] = dominant_direction
+                row[f"{prefix}_event_type"] = event_type
+                row[f"{prefix}_event_direction"] = event_direction
 
             rows_by_index[int(export_idx)] = row
 
@@ -220,6 +341,55 @@ def main() -> None:
             f"h{horizon}_future_break_direction": frame.group_by(f"h{horizon}_future_break_direction")
             .len()
             .sort(f"h{horizon}_future_break_direction")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "anchor_status_counts": {
+            f"h{horizon}_break_anchor_status": frame.group_by(f"h{horizon}_break_anchor_status")
+            .len()
+            .sort(f"h{horizon}_break_anchor_status")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "fresh_break_label_counts": {
+            f"h{horizon}_fresh_break_direction": frame.group_by(f"h{horizon}_fresh_break_direction")
+            .len()
+            .sort(f"h{horizon}_fresh_break_direction")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "semantic_label_counts": {
+            f"h{horizon}_break_semantic_label": frame.group_by(f"h{horizon}_break_semantic_label")
+            .len()
+            .sort(f"h{horizon}_break_semantic_label")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "post_break_outcome_counts": {
+            f"h{horizon}_post_break_outcome": frame.group_by(f"h{horizon}_post_break_outcome")
+            .len()
+            .sort(f"h{horizon}_post_break_outcome")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "dominant_forward_direction_counts": {
+            f"h{horizon}_dominant_forward_direction": frame.group_by(f"h{horizon}_dominant_forward_direction")
+            .len()
+            .sort(f"h{horizon}_dominant_forward_direction")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "event_type_counts": {
+            f"h{horizon}_event_type": frame.group_by(f"h{horizon}_event_type")
+            .len()
+            .sort(f"h{horizon}_event_type")
+            .to_dicts()
+            for horizon in horizons
+        },
+        "event_direction_counts": {
+            f"h{horizon}_event_direction": frame.group_by(f"h{horizon}_event_direction")
+            .len()
+            .sort(f"h{horizon}_event_direction")
             .to_dicts()
             for horizon in horizons
         },

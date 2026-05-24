@@ -15,6 +15,8 @@ Başlangıç noktası:
 - `stage1a-latent-concepts.md`
 - `stage1b-forward-labels.md`
 - `stage1b-output-contract.md`
+- `stage2-actionability-framing.md`
+- `stage2-actionability-labels.md`
 
 Önerilen okuma sırası:
 
@@ -23,3 +25,5 @@ Başlangıç noktası:
 3. `stage1a-latent-concepts.md`
 4. `stage1b-forward-labels.md`
 5. `stage1b-output-contract.md`
+6. `stage2-actionability-framing.md`
+7. `stage2-actionability-labels.md`

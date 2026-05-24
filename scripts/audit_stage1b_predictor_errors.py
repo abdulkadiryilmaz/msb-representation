@@ -98,6 +98,7 @@ def _load_dataset(metadata: dict[str, Any], split: str) -> Stage1BForwardDataset
         latent_path=Path(metadata[f"{split}_latent_path"]),
         label_path=Path(metadata[f"{split}_label_path"]),
         feature_keys=list(metadata["feature_keys"]),
+        context_feature_keys=list(metadata.get("context_feature_keys", [])),
         target_column=str(metadata["target_column"]),
         target_columns=metadata.get("target_columns"),
     )
