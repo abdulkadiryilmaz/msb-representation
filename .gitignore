@@ -9,6 +9,8 @@ build/
 *.egg-info/
 data/raw/
 data/stage1a/
+data/stage1b/
+data/stage2/
 data/checkpoints/
 data/evaluation/
 notebooks/.ipynb_checkpoints/
