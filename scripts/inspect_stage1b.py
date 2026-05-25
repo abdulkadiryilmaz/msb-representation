@@ -55,7 +55,11 @@ CONF_BUCKETS = {
 
 DEFAULT_PREDICTIONS = (
     "data/stage1b/binance/15m/checkpoints/"
-    "stage1b_h8_fresh_break_v3_z_fused_proximity/proximity_audit_test_t057/predictions_with_proximity.csv"
+    "stage1b_h16_joint_event_sequence_v1_z_fused_proximity/test_joint_event_predictions.csv"
+)
+DEFAULT_LABELS = (
+    "data/stage1a/binance/15m/checkpoints/ce_supcon_long_branch_ce_aux_v1_seed_41_e50/"
+    "analysis/stage1b_forward_labels_test_h4_h8_h16_v2.parquet"
 )
 RAW_DATA_ROOT = Path("data/raw/binance")
 HORIZON_OPTIONS = ["h4", "h8", "h16", "h32", "h48"]
@@ -64,10 +68,67 @@ HORIZON_OPTIONS = ["h4", "h8", "h16", "h32", "h48"]
 # ── Data loading ──────────────────────────────────────────────────────────────
 
 @st.cache_data
-def load_predictions(csv_path: str) -> pd.DataFrame:
+def load_predictions(csv_path: str, label_path: str | None = None) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
+    if "true_joint_event" in df.columns:
+        df = normalize_joint_predictions(df)
+    if label_path and Path(label_path).exists():
+        labels = pd.read_parquet(label_path)
+        merge_cols = ["index", "symbol", "timestamp"]
+        if all(col in df.columns for col in merge_cols) and all(col in labels.columns for col in merge_cols):
+            label_cols = [
+                col
+                for col in labels.columns
+                if col not in df.columns or col in merge_cols
+            ]
+            df = df.merge(labels[label_cols], on=merge_cols, how="left")
     df["anchor_dt"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_localize(None)
-    df["high_confidence_wrong"] = (~df["is_correct"]) & (df["break_confidence"] >= 0.90)
+    if "is_correct" not in df.columns:
+        df["is_correct"] = df.get("is_joint_correct", False)
+    if "break_confidence" not in df.columns:
+        df["break_confidence"] = df.get("joint_confidence", 0.0)
+    if "p_break" not in df.columns:
+        df["p_break"] = 1.0 - df["p_no_event"] if "p_no_event" in df.columns else df["break_confidence"]
+    if "pred_direction" not in df.columns:
+        df["pred_direction"] = df.get("pred_event_direction", df.get("pred_label", "none"))
+    if "direction_confidence" not in df.columns:
+        df["direction_confidence"] = df.get("joint_confidence", 0.0)
+    df["high_confidence_wrong"] = (~df["is_correct"].astype(bool)) & (df["break_confidence"] >= 0.90)
+    return df
+
+
+def normalize_joint_predictions(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["true_label"] = df["true_event_direction"].fillna("none").astype(str)
+    df["pred_label"] = df["pred_event_direction"].fillna("none").astype(str)
+    df["is_correct"] = df["is_joint_correct"].astype(bool)
+    df["break_confidence"] = df["joint_confidence"].astype(float)
+    df["p_break"] = 1.0 - df["p_no_event"].astype(float)
+    df["pred_direction"] = df["pred_event_direction"].astype(str)
+    df["direction_confidence"] = df["joint_confidence"].astype(float)
+    df["candidate_strength"] = df["joint_confidence"].astype(float)
+    df["candidate_gate"] = (
+        (df["pred_joint_event"] != "no_event")
+        & (
+            (df["joint_confidence"] >= 0.50)
+            | ((df["pred_event_type"] == "reversal") & (df["joint_confidence"] >= 0.45))
+        )
+    )
+
+    def error_type(row: pd.Series) -> str:
+        true_joint = str(row["true_joint_event"])
+        pred_joint = str(row["pred_joint_event"])
+        if true_joint == pred_joint:
+            return "correct"
+        if true_joint == "no_event" and pred_joint != "no_event":
+            return "false_positive_break"
+        if true_joint != "no_event" and pred_joint == "no_event":
+            return "false_negative_break"
+        if str(row["true_event_type"]) == str(row["pred_event_type"]):
+            return "wrong_direction"
+        return "wrong_event"
+
+    df["error_type"] = df.apply(error_type, axis=1)
     return df
 
 
@@ -118,7 +179,12 @@ def build_chart(
     horizon_bars = HORIZON_BARS.get(selected_horizon, DEFAULT_FUTURE_BARS)
 
     true_label = str(row["true_label"])
+    true_event_type = str(row.get("true_event_type", ""))
     future_color_hex = LABEL_COLORS.get(true_label, "#9e9e9e")
+    if true_event_type == "reversal":
+        future_color_hex = "#ab47bc"
+    elif true_event_type == "continuation":
+        future_color_hex = "#26a69a" if true_label == "bullish" else "#ef5350"
 
     def hex_rgb(h: str) -> str:
         h = h.lstrip("#")
@@ -208,11 +274,14 @@ def build_chart(
         "false_positive_break": "#ff9800",
         "false_negative_break": "#2196f3",
         "wrong_direction": "#ef5350",
+        "wrong_event": "#ab47bc",
     }
     title_color = error_colors.get(error_type, "#cccccc")
     semantic = str(row.get(f"{selected_horizon}_break_semantic_label", ""))
     outcome = str(row.get(f"{selected_horizon}_post_break_outcome", ""))
     title_text = error_type.replace("_", " ").upper()
+    if "pred_joint_event" in row.index:
+        title_text = f"{title_text} · pred {str(row['pred_joint_event']).replace('_', ' ')}"
     if semantic and semantic != "nan":
         title_text = f"{title_text} · {semantic.replace('_', ' ')}"
     if outcome and outcome not in {"nan", semantic}:
@@ -315,13 +384,20 @@ def main() -> None:
         default_csv = DEFAULT_PREDICTIONS
         if "--predictions" in cli_args:
             default_csv = cli_args[cli_args.index("--predictions") + 1]
+        default_label_path = DEFAULT_LABELS
+        if "--labels" in cli_args:
+            default_label_path = cli_args[cli_args.index("--labels") + 1]
 
         csv_path = st.text_input("Predictions CSV", value=default_csv)
         if not Path(csv_path).exists():
             st.error(f"File not found: {csv_path}")
             st.stop()
+        label_path = st.text_input("Label context parquet", value=default_label_path)
+        if label_path and not Path(label_path).exists():
+            st.warning(f"Label context not found, continuing without merge: {label_path}")
+            label_path = ""
 
-        df = load_predictions(csv_path)
+        df = load_predictions(csv_path, label_path or None)
 
         st.divider()
         st.header("Filters")
@@ -354,6 +430,14 @@ def main() -> None:
         pred_labels = sorted(df["pred_label"].dropna().astype(str).unique())
         true_filter = st.multiselect("True label", options=true_labels, default=true_labels)
         pred_filter = st.multiselect("Pred label", options=pred_labels, default=pred_labels)
+        if "candidate_gate" in df.columns:
+            candidate_filter = st.multiselect(
+                "Candidate gate",
+                options=["candidate", "not_candidate"],
+                default=["candidate", "not_candidate"],
+            )
+        else:
+            candidate_filter = None
 
         status_col = f"{selected_horizon}_break_anchor_status"
         semantic_col = f"{selected_horizon}_break_semantic_label"
@@ -406,6 +490,9 @@ def main() -> None:
         mask &= df[outcome_col].astype(str).isin(outcome_filter)
     if dominant_filter is not None and dominant_col in df.columns:
         mask &= df[dominant_col].astype(str).isin(dominant_filter)
+    if candidate_filter is not None:
+        candidate_labels = np.where(df["candidate_gate"].astype(bool), "candidate", "not_candidate")
+        mask &= pd.Series(candidate_labels, index=df.index).isin(candidate_filter)
 
     filtered = df[mask].reset_index(drop=True)
 
@@ -486,7 +573,7 @@ def main() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
-    col_meta, col_current, col_target, col_stage1b, col_proximity = st.columns(5, gap="small")
+    col_meta, col_current, col_stage1b = st.columns([1.0, 1.2, 2.2], gap="small")
 
     with col_meta:
         st.subheader("Sample")
@@ -519,113 +606,100 @@ def main() -> None:
         current_close = row.get("current_close")
         if pd.notna(current_close):
             st.metric("Current close", f"{current_close:.2f}")
-        st.caption("This is the structure label for the current anchor window.")
-
-    with col_target:
-        st.subheader("Forward target")
-        target_label = str(row.get("true_label", ""))
-        color = LABEL_COLORS.get(target_label, "#ccc")
-        st.markdown(
-            f"**Target true:** <span style='color:{color};font-size:1.1em;font-weight:700'>"
-            f"{LABEL_EMOJI.get(target_label, target_label)}</span>",
-            unsafe_allow_html=True,
-        )
-        st.caption("This is the supervised future target used by the predictor CSV.")
-
-    with col_stage1b:
-        st.subheader("Predictor decision")
-        pred_label = str(row.get("pred_label", ""))
-        color = LABEL_COLORS.get(pred_label, "#ccc")
-        st.markdown(
-            f"**Decision:** <span style='color:{color};font-weight:700'>"
-            f"{LABEL_EMOJI.get(pred_label, pred_label)}</span>",
-            unsafe_allow_html=True,
-        )
-        true_label = str(row.get("true_label", ""))
-        color2 = LABEL_COLORS.get(true_label, "#ccc")
-        st.markdown(
-            f"**Target true:** <span style='color:{color2};font-weight:700'>"
-            f"{LABEL_EMOJI.get(true_label, true_label)}</span>",
-            unsafe_allow_html=True,
-        )
-        pred_dir = str(row.get("pred_direction", ""))
-        color3 = LABEL_COLORS.get(pred_dir, "#ccc")
-        st.markdown(
-            f"**Direction head:** <span style='color:{color3};font-weight:700'>"
-            f"{LABEL_EMOJI.get(pred_dir, pred_dir)}</span>"
-            f" <span style='color:#888;font-size:0.85em'>({row['direction_confidence']:.2f})</span>",
-            unsafe_allow_html=True,
-        )
-        st.metric("Raw p_break", f"{row['p_break']:.3f}")
-        st.metric("Decision confidence", f"{row['break_confidence']:.3f}")
-        if pred_label == "none":
-            st.caption("For a `none` decision, confidence is `1 - p_break`.")
-
-    with col_proximity:
-        st.subheader("Proximity")
+        st.caption("Current anchor window and level proximity.")
         bull_dist = row.get("bull_distance_pct")
         bear_dist = row.get("bear_distance_pct")
         nearest = row.get("nearest_distance_pct")
         eff_break = row.get("effective_break_pct")
+        prox_left, prox_right = st.columns(2)
+        with prox_left:
+            if pd.notna(bull_dist):
+                st.metric("Bull dist", f"{bull_dist * 100:.3f}%")
+            if pd.notna(nearest):
+                st.metric("Nearest", f"{nearest * 100:.3f}%")
+        with prox_right:
+            if pd.notna(bear_dist):
+                st.metric("Bear dist", f"{bear_dist * 100:.3f}%")
+            if pd.notna(eff_break):
+                st.metric("Break th", f"{eff_break * 100:.3f}%")
 
-        if pd.notna(bull_dist):
-            st.metric("Bull distance", f"{bull_dist * 100:.3f}%")
-        if pd.notna(bear_dist):
-            st.metric("Bear distance", f"{bear_dist * 100:.3f}%")
-        if pd.notna(nearest):
-            st.metric("Nearest distance", f"{nearest * 100:.3f}%")
-        if pd.notna(eff_break):
-            st.metric("Break threshold", f"{eff_break * 100:.3f}%")
+    with col_stage1b:
+        st.subheader("H16 selected prediction")
+        st.caption("Source: H16 joint event predictor CSV.")
+        pred_left, pred_right = st.columns(2)
+        pred_label = str(row.get("pred_label", ""))
+        color = LABEL_COLORS.get(pred_label, "#ccc")
+        true_label = str(row.get("true_label", ""))
+        color2 = LABEL_COLORS.get(true_label, "#ccc")
+        with pred_left:
+            st.markdown(
+                f"**Decision:** <span style='color:{color};font-weight:700'>"
+                f"{LABEL_EMOJI.get(pred_label, pred_label)}</span>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"**Target true:** <span style='color:{color2};font-weight:700'>"
+                f"{LABEL_EMOJI.get(true_label, true_label)}</span>",
+                unsafe_allow_html=True,
+            )
+            if "pred_joint_event" in row.index:
+                st.metric("Pred joint", str(row["pred_joint_event"]))
+                st.metric("True joint", str(row["true_joint_event"]))
+        with pred_right:
+            st.metric("Raw p_break", f"{row['p_break']:.3f}")
+            st.metric("Decision conf", f"{row['break_confidence']:.3f}")
+            if "pred_joint_event" in row.index:
+                st.metric("Joint conf", f"{float(row['joint_confidence']):.3f}")
+            if "candidate_strength" in row.index:
+                st.metric("Candidate strength", f"{float(row['candidate_strength']):.3f}")
+            if "candidate_gate" in row.index:
+                gate = "candidate" if bool(row["candidate_gate"]) else "not candidate"
+                st.metric("Candidate gate", gate)
+            if pred_label == "none":
+                st.caption("For `none`, confidence is `1 - p_break`.")
 
-    v2_cols = [
-        f"{selected_horizon}_break_anchor_status",
-        f"{selected_horizon}_fresh_break_direction",
-        f"{selected_horizon}_break_semantic_label",
-        f"{selected_horizon}_post_break_outcome",
-        f"{selected_horizon}_dominant_forward_direction",
-        f"{selected_horizon}_event_type",
-        f"{selected_horizon}_event_direction",
-        f"{selected_horizon}_time_to_break",
-        f"{selected_horizon}_bull_confirm_bar",
-        f"{selected_horizon}_bear_confirm_bar",
-        f"{selected_horizon}_bull_close_count",
-        f"{selected_horizon}_bear_close_count",
-    ]
-    if any(col in row.index for col in v2_cols):
-        st.subheader(f"Event-sequence context · {selected_horizon.upper()}")
-        c1, c2, c3, c4 = st.columns(4)
+    def render_horizon_context(horizon: str) -> None:
+        st.markdown(f"#### {horizon.upper()} label context")
+        st.caption("Source: forward-label parquet. These are supervised labels/diagnostics, not model predictions.")
+        c1, c2, c3 = st.columns(3)
         with c1:
-            if f"{selected_horizon}_break_anchor_status" in row.index:
-                st.metric("Anchor status", str(row[f"{selected_horizon}_break_anchor_status"]))
-            if "current_close" in row.index and pd.notna(row["current_close"]):
-                st.metric("Current close", f"{float(row['current_close']):.4f}")
+            if f"{horizon}_break_anchor_status" in row.index:
+                st.metric("Anchor status", str(row[f"{horizon}_break_anchor_status"]))
+            if f"{horizon}_fresh_break_direction" in row.index:
+                st.metric("Fresh direction", str(row[f"{horizon}_fresh_break_direction"]))
+            if f"{horizon}_break_semantic_label" in row.index:
+                st.metric("Semantic", str(row[f"{horizon}_break_semantic_label"]))
         with c2:
-            if f"{selected_horizon}_fresh_break_direction" in row.index:
-                st.metric("Fresh direction", str(row[f"{selected_horizon}_fresh_break_direction"]))
-            if f"{selected_horizon}_break_semantic_label" in row.index:
-                st.metric("Semantic", str(row[f"{selected_horizon}_break_semantic_label"]))
+            if f"{horizon}_event_type" in row.index:
+                st.metric("Event type", str(row[f"{horizon}_event_type"]))
+            if f"{horizon}_event_direction" in row.index:
+                st.metric("Event direction", str(row[f"{horizon}_event_direction"]))
+            if f"{horizon}_post_break_outcome" in row.index:
+                st.metric("Outcome", str(row[f"{horizon}_post_break_outcome"]))
+            if f"{horizon}_dominant_forward_direction" in row.index:
+                st.metric("Dominant", str(row[f"{horizon}_dominant_forward_direction"]))
         with c3:
-            if f"{selected_horizon}_event_type" in row.index:
-                st.metric("Event type", str(row[f"{selected_horizon}_event_type"]))
-            if f"{selected_horizon}_event_direction" in row.index:
-                st.metric("Event direction", str(row[f"{selected_horizon}_event_direction"]))
-            if f"{selected_horizon}_post_break_outcome" in row.index:
-                st.metric("Outcome", str(row[f"{selected_horizon}_post_break_outcome"]))
-            if f"{selected_horizon}_dominant_forward_direction" in row.index:
-                st.metric("Dominant", str(row[f"{selected_horizon}_dominant_forward_direction"]))
-        with c4:
-            if f"{selected_horizon}_time_to_break" in row.index:
-                st.metric("Time to break", int(row[f"{selected_horizon}_time_to_break"]))
-            if f"{selected_horizon}_bull_confirm_bar" in row.index:
-                st.metric("Bull confirm", int(row[f"{selected_horizon}_bull_confirm_bar"]))
-            if f"{selected_horizon}_bear_confirm_bar" in row.index:
-                st.metric("Bear confirm", int(row[f"{selected_horizon}_bear_confirm_bar"]))
-            if f"{selected_horizon}_bull_close_count" in row.index and f"{selected_horizon}_bear_close_count" in row.index:
+            if f"{horizon}_time_to_break" in row.index:
+                st.metric("Time to break", int(row[f"{horizon}_time_to_break"]))
+            if f"{horizon}_bull_confirm_bar" in row.index:
+                st.metric("Bull confirm", int(row[f"{horizon}_bull_confirm_bar"]))
+            if f"{horizon}_bear_confirm_bar" in row.index:
+                st.metric("Bear confirm", int(row[f"{horizon}_bear_confirm_bar"]))
+            if f"{horizon}_bull_close_count" in row.index and f"{horizon}_bear_close_count" in row.index:
                 st.metric(
                     "Close hits",
-                    f"Bull {int(row[f'{selected_horizon}_bull_close_count'])} / "
-                    f"Bear {int(row[f'{selected_horizon}_bear_close_count'])}",
+                    f"Bull {int(row[f'{horizon}_bull_close_count'])} / "
+                    f"Bear {int(row[f'{horizon}_bear_close_count'])}",
                 )
+
+    st.divider()
+    st.subheader("Forward label context")
+    st.caption("This section explains the labels behind H8/H16. The selected model prediction is shown above.")
+    h8_context, h16_context = st.columns(2, gap="medium")
+    with h8_context:
+        render_horizon_context("h8")
+    with h16_context:
+        render_horizon_context("h16")
 
     st.caption(
         f"Past zone = {display_past_bars}-bar display window. "

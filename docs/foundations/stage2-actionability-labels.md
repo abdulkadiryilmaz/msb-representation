@@ -235,6 +235,75 @@ Audit sweep adayları:
 1.0R, 1.5R, 2.0R
 ```
 
+## Execution Cost / Net Target Guardrails
+
+Stage 2 v1 `mfe_r` ile R bazlı potansiyeli ölçer, fakat fee/slippage sonrası hedefin anlamlı kalıp kalmadığını açıkça kontrol etmez.
+
+Stage 2 v2 için ek guardrail gerekir:
+
+```text
+stop_pct = risk / entry_price
+gross_target_pct = abs(target - entry_price) / entry_price
+net_target_pct = gross_target_pct - estimated_cost_pct
+```
+
+Başlangıç değerleri:
+
+```text
+min_stop_pct = 0.0015        # 0.15%
+max_stop_pct = 0.0080        # 0.80%
+estimated_cost_pct = 0.0008  # 0.08% round-trip fee + slippage proxy
+min_net_target_pct = 0.0030  # 0.30%
+primary_target_r = 2.0
+```
+
+Yorum:
+
+- `min_stop_pct`: Çok dar stop'ları eler. Bu tip işlemler R olarak iyi görünse bile fee/slippage ve spread tarafından ezilebilir.
+- `max_stop_pct`: Çok geniş stop'ları eler. Bu tip işlemlerde 2R hedef fiyat olarak fazla uzaklaşabilir.
+- `estimated_cost_pct`: İlk sabit maliyet modeli. Exchange fee, spread ve slippage için round-trip kaba proxy'dir.
+- `min_net_target_pct`: Hedefe ulaşılsa bile maliyetlerden sonra anlamlı fiyat hareketi kalmasını zorlar.
+- `primary_target_r`: Stage 2 v2 için ilk ana hedef. `1.0R` v1 label'ı geniş tutmak için kullanışlıydı; TradePlan aday kalitesi için `2.0R` daha anlamlı başlangıçtır.
+
+Valid trade-plan candidate için önerilen ek koşullar:
+
+```text
+min_stop_pct <= stop_pct <= max_stop_pct
+net_target_pct >= min_net_target_pct
+```
+
+Örnek:
+
+```text
+entry = 94607
+stop = 94990
+risk = 383
+target_2R = 93840
+
+stop_pct = 383 / 94607 ~= 0.405%
+gross_target_pct = 766 / 94607 ~= 0.810%
+net_target_pct = 0.810% - 0.080% = 0.730%
+```
+
+Bu örnek guardrail'lerden geçer:
+
+```text
+0.15% <= 0.405% <= 0.80%
+0.730% >= 0.30%
+```
+
+Dar stop örneği:
+
+```text
+entry = 95521
+stop = 95531
+risk ~= 0.010%
+target_2R ~= 0.020%
+net_target_pct ~= 0.020% - 0.080% = -0.060%
+```
+
+Bu örnek R olarak hedefe ulaşsa bile pratikte anlamlı değildir ve v2 guardrail tarafından elenmelidir.
+
 ## Path Outcome
 
 Future path için sıralı olaylar hesaplanır:

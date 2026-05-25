@@ -7,7 +7,7 @@
 
 ```text
 H8 fresh trigger: stage1b_h8_fresh_break_v3_z_fused_proximity
-H16 dominant flow: stage1b_h16_dominant_v3_z_fused_proximity
+H16 event-sequence context: stage1b_h16_joint_event_sequence_v1_z_fused_proximity
 ```
 
 ## Purpose
@@ -124,6 +124,12 @@ Stage1BSignal:
   event_confidence:
     float
 
+  candidate_strength:
+    float
+
+  candidate_gate:
+    candidate | not_candidate
+
   expected_timing:
     immediate | soon | late | unknown
 
@@ -140,6 +146,44 @@ Stage1BSignal:
     nearest_side
     nearest_distance_pct
 ```
+
+H16 için son outcome-joint deneyi şunu gösterdi:
+
+```text
+tek bir event_type/event_direction alanı yeterli değil.
+```
+
+Bazı pencerelerde ilk event bullish fresh break olabilirken, aynı horizon içindeki trade-relevant path bearish reversal'a bağlanabiliyor. Bu yüzden H16 output iki semantiği ayrı tutmalıdır:
+
+```text
+Stage1BH16Signal:
+  first_event_signal:
+    event_type:
+      no_event | fresh_break | continuation | reversal
+    event_direction:
+      none | bullish | bearish
+    event_confidence:
+      float
+
+  outcome_signal:
+    outcome_type:
+      no_event | continuation | reversal | failed_break
+    outcome_direction:
+      none | bullish | bearish
+    outcome_confidence:
+      float
+
+  candidate_strength:
+    float
+
+  supporting_context:
+    bull_distance_pct
+    bear_distance_pct
+    nearest_side
+    nearest_distance_pct
+```
+
+`first_event_signal` timing ve trigger bağlamı için; `outcome_signal` ise Stage 2 trade bias ve target feasibility için daha uygundur.
 
 ## Event Semantics
 
@@ -161,6 +205,51 @@ Stage1BSignal:
 | bullish-to-bearish reversal | `bearish` |
 | bearish-to-bullish reversal | `bullish` |
 | no event | `none` |
+
+## Candidate Strength
+
+Stage 1B confidence should not be interpreted as a direct entry threshold.
+
+Current interpretation:
+
+```text
+candidate_strength = model confidence for the predicted event class
+```
+
+It is a context prior for Stage 2, not an execution decision.
+
+Initial candidate gate:
+
+```text
+candidate if:
+  pred_event_type != no_event
+  and (
+    candidate_strength >= 0.50
+    or pred_event_type == reversal and candidate_strength >= 0.45
+  )
+```
+
+Rationale:
+
+- H16 joint event confidence is lower than the older H8 fresh-break confidence.
+- Too high a threshold, such as `0.80`, filters out useful reversal examples.
+- Too low a threshold admits noisy false positives.
+- Stage 2 must still require price confirmation and risk/target guardrails before a TradePlan is created.
+
+Examples:
+
+```text
+index 453:
+  pred_event = reversal_bearish
+  candidate_strength = 0.549
+  candidate_gate = candidate
+
+index 450:
+  pred_event = fresh_break_bullish
+  candidate_strength = 0.675
+  candidate_gate = candidate
+  Stage 2 still rejects if price never confirms in the predicted direction.
+```
 
 ## Mapping From Current Label Fields
 
@@ -277,14 +366,38 @@ Current trained models are still partial implementations of this contract:
 | Model | Covers | Gap |
 |---|---|---|
 | `stage1b_h8_fresh_break_v3_z_fused_proximity` | near-term fresh trigger quality | does not directly output reversal/continuation |
-| `stage1b_h16_dominant_v3_z_fused_proximity` | broader dominant forward direction | does not explicitly classify event type |
+| `stage1b_h16_joint_event_sequence_v1_z_fused_proximity` | event type + direction as joint class | reversal support is low; confidence requires Stage 2 guardrails |
+
+Current selected implementation:
+
+```text
+H8:
+  fills near-term fresh trigger signal
+
+H16:
+  fills first_event_signal + candidate_strength + candidate_gate
+
+H16 outcome_signal:
+  unknown / null
+
+H16 dominant_direction:
+  unknown / null
+```
+
+Reason:
+
+```text
+outcome-joint and multi-head v1 were useful diagnostics,
+but neither reached selected predictor quality.
+```
 
 Next implementation step:
 
 ```text
-Train / audit a Stage 1B event-sequence head:
-  event_type: no_event / fresh_break / continuation / reversal
-  event_direction: none / bullish / bearish
+Audit H16 joint event-sequence output with Stage 2 price confirmation:
+  candidate_strength as context prior
+  price confirmation as execution gate
+  stop/target guardrails as actionability filter
 ```
 
 This should be evaluated separately from the fresh-break H8 predictor.

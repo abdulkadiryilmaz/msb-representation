@@ -33,21 +33,19 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 ## Current Active Experiment
 
 - active run:
-  - Stage 1B event-sequence predictor design
+  - Stage 1B H8/H16 handoff to Stage 2 actionability design
   - selected Stage 1A checkpoint: `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
   - selected Stage 1B H8 checkpoint: `stage1b_h8_fresh_break_v3_z_fused_proximity/best.pt`
-  - selected Stage 1B H16 checkpoint: `stage1b_h16_dominant_v3_z_fused_proximity/best.pt`
+  - selected Stage 1B H16 checkpoint: `stage1b_h16_joint_event_sequence_v1_z_fused_proximity/best.pt`
   - foundation: `docs/foundations/stage1b-output-contract.md`
 - latest completed:
-  - `Stage 1B event-sequence contract v2`
-  - readout: `docs/experiments/stage1b/2026-05-24-stage1b-event-sequence-contract-v2-readout.md`
+  - `Stage 1B H16 multi-head event-sequence v1`
+  - readout: `docs/experiments/stage1b/2026-05-25-stage1b-h16-multihead-event-sequence-v1-readout.md`
 - latest result:
-  - Stage 1B output contract `fresh break only` semantiğinden `event_type + event_direction` sözleşmesine taşındı
-  - label generator artık `h{H}_event_type` ve `h{H}_event_direction` alanlarını üretiyor
-  - index 453 artık `fresh_break=none` kalırken `event_type=reversal`, `event_direction=bearish` olarak ayrışıyor
-  - index 454 `event_type=fresh_break`, `event_direction=bearish`
-  - H8 reversal sınıfı seyrek: test `25`; H16 reversal daha kullanılabilir: test `112`
-  - sonuç: H8 fresh-trigger için, H16 ise event-sequence / reversal-continuation çalışması için daha uygun aday
+  - H16 selected implementation `first_event_signal + candidate_gate` üretir
+  - `outcome_signal` ve `dominant_direction` contract'ta tutulur ama selected-quality predictor olmadığı için şimdilik `unknown/null`
+  - outcome-joint ve multi-head denemeleri useful diagnostic; single-task H16 joint modeli selected H16 context adayı olarak kaldı
+  - UI H16 prediction ile H8/H16 label context alanlarını ayıracak şekilde sadeleştirildi
 - current best candidate:
   - `ce_supcon_long_branch_ce_aux_v1_seed_41_e50/epoch_020.pt`
 
@@ -87,6 +85,11 @@ Bu dosya, Stage 1A deneylerini yüksek seviyede takip etmek için kısa bir giri
 | `Stage 1B` | Stage 1A latent proximity probe v1 | diagnostic | intact örneklerde nearest side okunuyor (`z_fused` linear F1 `0.7644`), distance bucket zayıf (`0.4295`) |
 | `Stage 1B` | proximity-enriched predictor v3 | accepted diagnostic | `z_fused + explicit context`; H8 fresh recon F1 `0.5971`, direction F1 `0.8412`; index 454 hatası düzeldi |
 | `Stage 1B` | event-sequence contract v2 | completed | output contract `event_type + event_direction`; H8 reversal seyrek, H16 event-sequence predictor sonraki aday |
+| `Stage 1B` | process summary | reference | Stage 1B downstream aktarımından event-sequence contract'a kadar süreç özeti |
+| `Stage 1B` | H16 event-sequence predictor v1 | diagnostic | event type test macro F1 `0.5210`; direction F1 `0.8479`; 453'te reversal type doğru ama direction yanlış, joint classifier gerekiyor |
+| `Stage 1B` | H16 joint event-sequence predictor v1 | diagnostic | joint test macro F1 `0.4529`; 453 `reversal_bearish` düzeldi, ancak no_event/fresh karışımı ve reversal support hâlâ zayıf |
+| `Stage 1B` | H16 outcome-joint predictor v1 | diagnostic | outcome target test joint macro F1 `0.2840`; 451-453 `reversal_bearish` düzeldi, ancak reversal F1 düşük; H16 contract first-event + outcome sinyalini birlikte taşımalı |
+| `Stage 1B` | H16 multi-head event-sequence v1 | diagnostic | first-event F1 `0.4450`, outcome F1 `0.2726`, dominant direction F1 `0.6604`; single-task modelleri geçmedi ama çok-output contract baseline'ı oluştu |
 | `Stage 2` | actionability label v1 | completed | rule-based labels generated; false-positive Stage 1B breaks mostly filtered to `no_trade` |
 | `Stage 2` | actionability threshold sweep v1 | completed | selected `min_confidence=0.80`, `min_mfe_r=1.0`; false-positive actionable count drops to `0` |
 
